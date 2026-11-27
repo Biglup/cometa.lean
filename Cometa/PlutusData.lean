@@ -16,13 +16,12 @@ limitations under the License.
 -/
 
 import Cometa.Hash
-import Cometa.Internal.Cbor
-import Cometa.Internal.CborDecoder
+import Cometa.Internal.Component
 import Cometa.Internal.Output
 
-/-! Typed construction of every Plutus data form, with a separate preserved
-encoding identity. Map order and duplicate keys are retained by the encoder.
-Hashing and imported-CBOR validation use the pinned native implementation.
+/-! Typed Plutus data views backed by native constructors, readers, writers and
+hashing. Copied semantic trees remain separate from imported encoding identity.
+Native map getters retain ordered pairs and duplicate keys.
 -/
 
 namespace Cometa
@@ -53,20 +52,16 @@ namespace PlutusData
 
 -- DEFINITIONS ----------------------------------------------------------------
 
-/-- Encode semantic data using shortest integers, definite arrays/maps, and
-bounded byte chunks. Re-encoding a parsed datum can change its hash; retain
-`EncodedPlutusData.toCbor` when preserving an imported identity.
+/-- Copy semantic fields for native constructors; decimal text transports Int
+without narrowing it to a machine integer. No CBOR is produced in Lean.
 -/
-def toCbor : PlutusData → ByteArray
-  | .constr alternative fields =>
-    let encoded := Internal.Cbor.array (fields.map toCbor)
-    if alternative < 7 then Internal.Cbor.tag (121 + alternative) encoded
-    else if alternative < 128 then Internal.Cbor.tag (1280 + alternative - 7) encoded
-    else Internal.Cbor.tag 102 (Internal.Cbor.array [Internal.Cbor.unsigned alternative, encoded])
-  | .map entries => Internal.Cbor.map (entries.map fun entry => (toCbor entry.1, toCbor entry.2))
-  | .list entries => Internal.Cbor.array (entries.map toCbor)
-  | .integer value => Internal.Cbor.integer value
-  | .bytes value => Internal.Cbor.boundedBytes value
+def toNative : PlutusData → Internal.Component
+  | .constr alternative fields => .node 0 alternative ByteArray.empty ByteArray.empty "" (fields.map toNative)
+  | .map entries => .node 1 0 ByteArray.empty ByteArray.empty ""
+      (entries.flatMap fun entry => [toNative entry.1, toNative entry.2])
+  | .list entries => .node 2 0 ByteArray.empty ByteArray.empty "" (entries.map toNative)
+  | .integer value => .node 3 0 ByteArray.empty ByteArray.empty (toString value) []
+  | .bytes value => .node 4 0 value ByteArray.empty "" []
 termination_by data => sizeOf data
 decreasing_by
   all_goals simp_wf
@@ -78,65 +73,52 @@ decreasing_by
        simp_all only [Prod.mk.sizeOf_spec]
        omega)
 
-private def bytesInteger (bytes : ByteArray) : Nat :=
-  bytes.data.foldl (fun value byte => value * 256 + byte.toNat) 0
+private def pairs : List PlutusData → Except Error (List (PlutusData × PlutusData))
+  | [] => .ok []
+  | key :: value :: rest => do return (key, value) :: (← pairs rest)
+  | [_] => .error (.invalidInput "Incomplete native map snapshot")
 
-private def fromTerm : Internal.Cbor.Term → Except Error PlutusData
-  | .unsigned value => .ok (.integer value.toNat)
-  | .negative value => .ok (.integer (-Int.ofNat value.toNat - 1))
-  | term@(.bytes _) => do return .bytes (← term.asBytes (some 64))
-  | .array items => do return .list (← items.mapM fromTerm)
-  | .map entries => do
-    let pairs ← entries.mapM fun entry => do return (← fromTerm entry.1, ← fromTerm entry.2)
-    return .map pairs
-  | .tag number item => do
-    if number == 2 || number == 3 then
-      let magnitude := bytesInteger (← item.asBytes (some 64))
-      return .integer (if number == 2 then magnitude else -Int.ofNat magnitude - 1)
-    else if number == 102 then
-      let .array [.unsigned alternative, .array fields] := item
-        | throw (.invalidInput "Invalid general Plutus constructor")
-      return .constr alternative (← fields.mapM fromTerm)
-    else
-      let alternative ← if 121 ≤ number && number ≤ 127 then pure (number - 121)
-        else if 1280 ≤ number && number ≤ 1400 then pure (number - 1280 + 7)
-        else throw (.invalidInput "Unknown Plutus data tag")
-      let .array fields := item | throw (.invalidInput "Constructor fields must be an array")
-      return .constr alternative (← fields.mapM fromTerm)
-  | _ => .error (.invalidInput "Unsupported Plutus data item")
-termination_by term => sizeOf term
-decreasing_by
-  all_goals simp_wf
-  all_goals first
-    | decreasing_tactic
-    | (rename_i membership
-       have smaller := List.sizeOf_lt_of_mem membership
-       cases entry
-       simp_all only [Prod.mk.sizeOf_spec]
-       omega)
+/-- Validate and copy native data getters into the public semantic tree. -/
+def ofNative : Internal.Component → Except Error PlutusData
+  | .node kind number payload _ text children => do
+    match kind with
+    | 0 => return .constr number (← children.mapM ofNative)
+    | 1 => return .map (← pairs (← children.mapM ofNative))
+    | 2 => return .list (← children.mapM ofNative)
+    | 3 =>
+      let some value := text.toInt? | throw (.invalidInput "Invalid native integer snapshot")
+      return .integer value
+    | 4 => return .bytes payload
+    | _ => throw (.invalidInput "Unknown native Plutus data kind")
 
-/-- Decode exactly one semantic datum, checking constructor arities, tags and
-64-byte leaves/chunks. Map order and duplicate keys are preserved. Re-encoding
-this semantic tree may change identity; use EncodedPlutusData for preservation.
+/-- Construct native Plutus objects and serialize with the pinned native writer.
+The native writer chooses container forms. Imported identity belongs to
+`EncodedPlutusData`, not to a re-encoded semantic tree.
 -/
-def ofCbor (bytes : ByteArray) : Except Error PlutusData := do
-  fromTerm (← Internal.Cbor.decode bytes)
+def toCbor (data : PlutusData) : EIO Error ByteArray :=
+  (Internal.componentEncode 3 data.toNative).adapt (.native "PlutusData.toCbor")
+
+/-- Parse through the native Plutus data codec and copy all semantic fields. -/
+def ofCbor (bytes : ByteArray) : EIO Error PlutusData := do
+  let fields ← (Internal.componentDecode 3 bytes).adapt (.native "PlutusData.ofCbor")
+  EIO.ofExcept (ofNative fields)
 
 end PlutusData
 
 namespace EncodedPlutusData
 
 /-- Validate exactly one native-supported datum and hash its exact bytes.
-Byte leaves/chunks, including bignum payloads, must be at most 64 bytes.
-This checks datum serialization, not a validator's application-specific schema.
+This follows native parsing acceptance, which is broader than ledger validation
+(for example, the pinned reader accepts oversized byte leaves).
 -/
 def ofCbor (bytes : ByteArray) : EIO Error EncodedPlutusData := do
-  let contents ← EIO.ofExcept (PlutusData.ofCbor bytes)
+  let contents ← PlutusData.ofCbor bytes
   let digest ← (Internal.datumHash bytes).adapt (.native "EncodedPlutusData.ofCbor")
   return ⟨bytes, ← EIO.ofExcept (Hash.ofBytes digest), contents⟩
 
 /-- Encode and validate typed data, assigning a fresh encoding identity. -/
-def ofData (data : PlutusData) : EIO Error EncodedPlutusData := ofCbor data.toCbor
+def ofData (data : PlutusData) : EIO Error EncodedPlutusData := do
+  ofCbor (← data.toCbor)
 
 /-- Exact validated datum bytes. -/
 def toCbor (data : EncodedPlutusData) : ByteArray := data.cbor

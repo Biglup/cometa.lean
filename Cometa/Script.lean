@@ -17,7 +17,6 @@ limitations under the License.
 
 import Cometa.Asset
 import Cometa.Credential
-import Cometa.Internal.Cbor
 import Cometa.Internal.Output
 
 /-! Typed native-script trees and versioned Plutus program bytes. Script hashing
@@ -78,37 +77,39 @@ namespace NativeScript
 
 -- DEFINITIONS ----------------------------------------------------------------
 
-/-- Serialize a native-script tree without its outer language envelope. -/
-def toCbor : NativeScript → ByteArray
-  | .signature hash => Internal.Cbor.array [Internal.Cbor.unsigned 0, Internal.Cbor.bytes hash.bytes]
-  | .all scripts => Internal.Cbor.array [Internal.Cbor.unsigned 1, Internal.Cbor.array (scripts.map toCbor)]
-  | .any scripts => Internal.Cbor.array [Internal.Cbor.unsigned 2, Internal.Cbor.array (scripts.map toCbor)]
-  | .atLeast required scripts => Internal.Cbor.array [Internal.Cbor.unsigned 3,
-      Internal.Cbor.unsigned required, Internal.Cbor.array (scripts.map toCbor)]
-  | .invalidBefore slot => Internal.Cbor.array [Internal.Cbor.unsigned 4, Internal.Cbor.unsigned slot]
-  | .invalidAfter slot => Internal.Cbor.array [Internal.Cbor.unsigned 5, Internal.Cbor.unsigned slot]
-  | .requireGuard credential => Internal.Cbor.array [Internal.Cbor.unsigned 6, credential.toCbor]
+/-- Copy native-script fields for the corresponding C constructors. -/
+def toNative : NativeScript → Internal.Component
+  | .signature hash => .node 0 0 hash.bytes ByteArray.empty "" []
+  | .all scripts => .node 1 0 ByteArray.empty ByteArray.empty "" (scripts.map toNative)
+  | .any scripts => .node 2 0 ByteArray.empty ByteArray.empty "" (scripts.map toNative)
+  | .atLeast required scripts => .node 3 required ByteArray.empty ByteArray.empty "" (scripts.map toNative)
+  | .invalidBefore slot => .node 4 slot ByteArray.empty ByteArray.empty "" []
+  | .invalidAfter slot => .node 5 slot ByteArray.empty ByteArray.empty "" []
+  | .requireGuard credential => .node 6 0 ByteArray.empty ByteArray.empty "" [credential.toNative]
 
-end NativeScript
+/-- Validate a semantic snapshot from native script getters. -/
+def ofNative : Internal.Component → Except Error NativeScript
+  | .node kind number bytes _ _ children => do
+    match kind with
+    | 0 => return .signature (← Hash.ofBytes bytes)
+    | 1 => return .all (← children.mapM ofNative)
+    | 2 => return .any (← children.mapM ofNative)
+    | 3 => return .atLeast number (← children.mapM ofNative)
+    | 4 => return .invalidBefore number
+    | 5 => return .invalidAfter number
+    | 6 =>
+      let [credential] := children | throw (.invalidInput "Missing native guard credential")
+      return .requireGuard (← Credential.ofNative credential)
+    | _ => throw (.invalidInput "Unknown native script kind")
 
-private def nativeFromTerm : Internal.Cbor.Term → Except Error NativeScript
-  | .array [.unsigned 0, bytes] => do return .signature (← Hash.ofBytes (← bytes.asBytes))
-  | .array [.unsigned 1, .array children] => do return .all (← children.mapM nativeFromTerm)
-  | .array [.unsigned 2, .array children] => do return .any (← children.mapM nativeFromTerm)
-  | .array [.unsigned 3, .unsigned required, .array children] =>
-    do return .atLeast required (← children.mapM nativeFromTerm)
-  | .array [.unsigned 4, .unsigned slot] => .ok (.invalidBefore slot)
-  | .array [.unsigned 5, .unsigned slot] => .ok (.invalidAfter slot)
-  | .array [.unsigned 6, credential] => do return .requireGuard (← Internal.credentialFromTerm credential)
-  | _ => .error (.invalidInput "Invalid native script tag, arity or field")
+/-- Construct and encode a native-script tree through cardano-c. -/
+def toCbor (script : NativeScript) : EIO Error ByteArray :=
+  (Internal.componentEncode 4 script.toNative).adapt (.native "NativeScript.toCbor")
 
-namespace NativeScript
-
-/-- Decode a native-script semantic tree, including guard alternative 6. Re-encoding
-may normalize it; use Script.ofCbor to preserve an imported envelope and hash.
--/
-def ofCbor (bytes : ByteArray) : Except Error NativeScript := do
-  nativeFromTerm (← Internal.Cbor.decode bytes)
+/-- Parse a tree using the native script reader and getters. -/
+def ofCbor (bytes : ByteArray) : EIO Error NativeScript := do
+  let fields ← (Internal.componentDecode 4 bytes).adapt (.native "NativeScript.ofCbor")
+  EIO.ofExcept (ofNative fields)
 
 end NativeScript
 
@@ -129,39 +130,36 @@ private def create (view : ScriptView) (cbor : ByteArray) : EIO Error Script := 
   let digest ← (Internal.scriptHash cbor).adapt (.native "Script.create")
   return ⟨view, cbor, ← EIO.ofExcept (PolicyId.ofBytes digest)⟩
 
-/-- Validate and hash a typed native script through the native implementation. -/
-def ofNative (script : NativeScript) : EIO Error Script :=
-  create (.native script) (Internal.Cbor.array [Internal.Cbor.unsigned 0, script.toCbor])
+/-- Construct, encode and hash a typed script through native objects. -/
+def ofNative (script : NativeScript) : EIO Error Script := do
+  let fields := Internal.Component.node 0 0 ByteArray.empty ByteArray.empty "" [script.toNative]
+  let cbor ← (Internal.componentEncode 5 fields).adapt (.native "Script.ofNative")
+  create (.native script) cbor
 
-/-- Wrap nonempty compiled bytes without executing or Flat-decoding the program.
-The language is part of the hash; unknown versions cannot be constructed.
--/
+/-- Construct a native Plutus script wrapper without executing its program. -/
 def ofPlutus (version : PlutusVersion) (program : ByteArray) : EIO Error Script := do
   if program.isEmpty then throw (.invalidInput "A Plutus program must be nonempty")
-  create (.plutus version program)
-    (Internal.Cbor.array [Internal.Cbor.unsigned version.tag, Internal.Cbor.bytes program])
+  let fields := Internal.Component.node version.tag 0 program ByteArray.empty "" []
+  let cbor ← (Internal.componentEncode 5 fields).adapt (.native "Script.ofPlutus")
+  create (.plutus version program) cbor
 
-/-- Decode exactly one native/Plutus script envelope, retaining every input byte.
-Native trees retain semantics; Plutus programs retain their unwrapped bytes.
-Unknown languages, malformed trees, empty programs and trailing data are rejected.
-Imported native-script payload bytes determine their hash, including nonminimal
-encodings. The enclosing language-array encoding itself is not hash input.
+/-- Parse and hash through cardano-c, retaining the exact imported envelope.
+Semantic fields come from native getters. Re-encoding a native-script tree may
+change its payload bytes and hash; inspecting `view` leaves identity unchanged.
 -/
 def ofCbor (bytes : ByteArray) : EIO Error Script := do
-  let term ← EIO.ofExcept (Internal.Cbor.decode bytes)
-  let .array [.unsigned language, payload] := term
-    | throw (.invalidInput "A script envelope must contain language and payload")
+  let .node language _ program _ _ children ←
+    (Internal.componentDecode 5 bytes).adapt (.native "Script.ofCbor")
   if language == 0 then
-    let tree ← EIO.ofExcept (nativeFromTerm payload)
-    create (.native tree) bytes
+    let [tree] := children | throw (.invalidInput "Missing native script tree")
+    create (.native (← EIO.ofExcept (NativeScript.ofNative tree))) bytes
   else
     let version ← match language with
       | 1 => pure PlutusVersion.v1
       | 2 => pure PlutusVersion.v2
       | 3 => pure PlutusVersion.v3
       | 4 => pure PlutusVersion.v4
-      | _ => throw (.invalidInput "Unknown Plutus language")
-    let program ← EIO.ofExcept payload.asBytes
+      | _ => throw (.invalidInput "Unknown native Plutus language")
     if program.isEmpty then throw (.invalidInput "A Plutus program must be nonempty")
     create (.plutus version program) bytes
 

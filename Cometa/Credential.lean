@@ -16,7 +16,7 @@ limitations under the License.
 -/
 
 import Cometa.Hash
-import Cometa.Internal.CborDecoder
+import Cometa.Internal.Component
 
 /-! Key/script credentials. The containing ledger field determines their role;
 construction proves hash length, not ownership or authority.
@@ -38,28 +38,26 @@ namespace Credential
 
 -- DEFINITIONS ----------------------------------------------------------------
 
-/-- Encode the credential as `[0, keyHash]` or `[1, scriptHash]`. -/
-def toCbor : Credential → ByteArray
-  | .key hash => Internal.Cbor.array [Internal.Cbor.unsigned 0, Internal.Cbor.bytes hash.bytes]
-  | .script hash => Internal.Cbor.array [Internal.Cbor.unsigned 1, Internal.Cbor.bytes hash.bytes]
+/-- Copied fields for the native credential constructor. -/
+def toNative (credential : Credential) : Internal.Component :=
+  match credential with
+  | .key hash => .node 0 0 hash.bytes ByteArray.empty "" []
+  | .script hash => .node 1 0 hash.bytes ByteArray.empty "" []
 
-end Credential
+/-- Validate a snapshot obtained from native credential getters. -/
+def ofNative : Internal.Component → Except Error Credential
+  | .node 0 _ bytes _ _ _ => return .key (← Hash.ofBytes bytes)
+  | .node 1 _ bytes _ _ _ => return .script (← Hash.ofBytes bytes)
+  | _ => .error (.invalidInput "Unknown native credential kind")
 
-namespace Internal
+/-- Construct and encode a credential through cardano-c. -/
+def toCbor (credential : Credential) : EIO Error ByteArray :=
+  (Internal.componentEncode 0 credential.toNative).adapt (.native "Credential.toCbor")
 
-/-- Validate a credential's tag, arity and hash length without assigning a ledger role. -/
-def credentialFromTerm : Cbor.Term → Except Error Credential
-  | .array [.unsigned 0, bytes] => do return .key (← Hash.ofBytes (← bytes.asBytes))
-  | .array [.unsigned 1, bytes] => do return .script (← Hash.ofBytes (← bytes.asBytes))
-  | _ => .error (.invalidInput "Expected a key or script credential")
-
-end Internal
-
-namespace Credential
-
-/-- Decode exactly one credential, rejecting unknown tags, bad lengths and trailing bytes. -/
-def ofCbor (bytes : ByteArray) : Except Error Credential := do
-  Internal.credentialFromTerm (← Internal.Cbor.decode bytes)
+/-- Parse a credential through cardano-c and check the copied hash length. -/
+def ofCbor (bytes : ByteArray) : EIO Error Credential := do
+  let fields ← (Internal.componentDecode 0 bytes).adapt (.native "Credential.ofCbor")
+  EIO.ofExcept (ofNative fields)
 
 end Credential
 end Cometa

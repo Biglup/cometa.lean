@@ -19,6 +19,7 @@
 
 #include <cardano/cardano.h>
 #include <lean/lean.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* DEFINITIONS ***************************************************************/
@@ -435,3 +436,5 @@ cometa_lean_output_round_trip(b_lean_obj_arg bytes)
   cardano_cbor_reader_unref(&reader);
   return code == CARDANO_SUCCESS ? lean_io_result_mk_ok(encoded) : native_error(code);
 }
+
+#include "cometa_components.h"

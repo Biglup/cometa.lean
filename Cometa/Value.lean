@@ -16,8 +16,7 @@ limitations under the License.
 -/
 
 import Cometa.Asset
-import Cometa.Internal.Cbor
-import Cometa.Internal.CborDecoder
+import Cometa.Internal.Component
 
 /-! Finite signed asset bundles with arbitrary-precision arithmetic. Duplicate
 entries add and missing assets have quantity zero. Output/mint serialization
@@ -97,48 +96,59 @@ def checkOutput (value : Value) : Except Error CheckedOutput :=
   if h : value.ValidOutput then .ok ⟨value, h⟩
   else .error (.invalidInput "Output quantities must be nonnegative and fit their native bounds")
 
-private def policyAssetsCbor (policy : PolicyId) (assets : List (PolicyId × AssetName × Int)) :
-    ByteArray :=
-  let entries := assets.filterMap fun (entryPolicy, name, amount) =>
-    if entryPolicy == policy then
-      some (Internal.Cbor.bytes name.bytes, Internal.Cbor.integer amount)
-    else none
-  Internal.Cbor.canonicalMap entries
-
-private def multiAssetCbor (value : Value) : ByteArray :=
+/-- Copy checked scalar fields for native value/multi-asset construction. This
+transport is not CBOR; integer bounds are checked by the calling codec API.
+-/
+def toNative (value : Value) : Internal.Component :=
   let assets := value.toList.filterMap fun (asset, amount) =>
     match asset with
     | .ada => none
-    | .native policy name => some (policy, name, amount)
-  let policies := (assets.map fun entry => entry.1).eraseDups
-  let entries := policies.map fun policy =>
-    (Internal.Cbor.bytes policy.bytes, policyAssetsCbor policy assets)
-  Internal.Cbor.canonicalMap entries
+    | .native policy name => some (Internal.Component.node 0 (Int64.ofInt amount).toUInt64
+        policy.bytes name.bytes "" [])
+  .node 0 (value.quantity .ada).toNat.toUInt64 ByteArray.empty ByteArray.empty "" assets
 
-/-- Serialize a checked output value as coin or `[coin, multiasset]`. Native-asset
-maps use deterministic encoded-key order. No input entries are silently discarded
-except quantities whose aggregate is zero.
+/-- Check native getter results before exposing them as a Lean bundle. Duplicate
+asset identities are rejected rather than silently aggregated during import.
 -/
-def CheckedOutput.toCbor (checked : CheckedOutput) : ByteArray :=
-  let value := checked.val
-  let coin := Internal.Cbor.unsigned (value.quantity .ada).toNat.toUInt64
-  if value.toList.any (fun entry => entry.1 != .ada) then
-    Internal.Cbor.array [coin, multiAssetCbor value]
-  else coin
+def ofNative : Internal.Component → Except Error Value
+  | .node _ coin _ _ _ entries => do
+    let mut result := Value.lovelace coin.toNat
+    let mut seen : List AssetId := []
+    for entry in entries do
+      let .node _ amount policy name _ _ := entry
+      let asset := AssetId.native (← PolicyId.ofBytes policy) (← AssetName.ofBytes name)
+      if seen.contains asset then throw (.invalidInput "Duplicate native asset identity")
+      seen := asset :: seen
+      result := result + Value.singleton asset (Int64.ofUInt64 amount).toInt
+    return result
 
-/-- Check output bounds and encode the resulting value. -/
-def toOutputCbor (value : Value) : Except Error ByteArray := do
-  return (← value.checkOutput).toCbor
+/-- Construct and serialize a checked value through cardano-c. -/
+def CheckedOutput.toCbor (checked : CheckedOutput) : EIO Error ByteArray :=
+  (Internal.componentEncode 1 checked.val.toNative).adapt (.native "Value.toOutputCbor")
 
-/-- Encode a mint/burn map. Ada must be zero; native quantities fit signed 64 bits.
-Zero aggregates are omitted. An empty result is a map; omit the body field when
-an era disallows a present empty mint field.
+/-- Check quantity bounds, then use the native value constructor and writer. -/
+def toOutputCbor (value : Value) : EIO Error ByteArray := do
+  let checked ← EIO.ofExcept value.checkOutput
+  checked.toCbor
+
+/-- Construct and serialize a native mint/burn map. Ada must be zero and native
+quantities must fit signed 64 bits. Zero aggregates are omitted.
 -/
-def toMintCbor (value : Value) : Except Error ByteArray := do
+def toMintCbor (value : Value) : EIO Error ByteArray := do
   if value.quantity .ada != 0 then throw (.invalidInput "Ada cannot be minted or burned")
   if value.toList.any (fun entry => entry.2 < -9223372036854775808 || entry.2 > 9223372036854775807) then
     throw (.invalidInput "Mint quantities must fit signed 64 bits")
-  return multiAssetCbor value
+  (Internal.componentEncode 2 value.toNative).adapt (.native "Value.toMintCbor")
+
+/-- Parse with the native value reader, then prove bounds for its copied quantities. -/
+def ofOutputCbor (bytes : ByteArray) : EIO Error CheckedOutput := do
+  let fields ← (Internal.componentDecode 1 bytes).adapt (.native "Value.ofOutputCbor")
+  EIO.ofExcept (ofNative fields >>= checkOutput)
+
+/-- Parse a signed mint/burn map through the native multi-asset reader. -/
+def ofMintCbor (bytes : ByteArray) : EIO Error Value := do
+  let fields ← (Internal.componentDecode 2 bytes).adapt (.native "Value.ofMintCbor")
+  EIO.ofExcept (ofNative fields)
 
 -- THEOREMS -------------------------------------------------------------------
 
@@ -156,62 +166,6 @@ theorem checkOutput_sound (value : Value) (checked : CheckedOutput)
 
 /-- Every checked output carries a proof of the declared quantity bounds. -/
 theorem checkedOutput_valid (checked : CheckedOutput) : checked.val.ValidOutput := checked.property
-
-end Value
-
-namespace Internal
-
--- COMPONENT DECODING ---------------------------------------------------------
-
-private def assetsFromTerm (term : Cbor.Term) : Except Error Value := do
-  let policies ← term.asMap
-  let mut seenPolicies : List PolicyId := []
-  let mut result := Value.zero
-  for (policyTerm, assetTerm) in policies do
-    let policy ← PolicyId.ofBytes (← policyTerm.asBytes)
-    if seenPolicies.contains policy then throw (.invalidInput "Duplicate policy in asset map")
-    seenPolicies := policy :: seenPolicies
-
-    let assets ← assetTerm.asMap
-    let mut seenNames : List AssetName := []
-    for (nameTerm, quantityTerm) in assets do
-      let name ← AssetName.ofBytes (← nameTerm.asBytes)
-      if seenNames.contains name then throw (.invalidInput "Duplicate name in asset map")
-      seenNames := name :: seenNames
-      let quantity ← quantityTerm.asSigned64
-      result := result + Value.singleton (.native policy name) quantity
-  return result
-
-/-- Decode an output value and check its nonnegative representation bounds.
-Duplicate policies/names are rejected rather than aggregated during import.
--/
-def outputValueFromTerm (term : Cbor.Term) : Except Error Value.CheckedOutput := do
-  let value : Value ← match term with
-    | .unsigned coin => pure (Value.lovelace coin.toNat)
-    | .array [.unsigned coin, assets] => do
-      let bundle ← assetsFromTerm assets
-      pure (Value.lovelace coin.toNat + bundle)
-    | _ => throw (.invalidInput "Expected coin or a two-field output value")
-  value.checkOutput
-
-/-- Decode a signed mint/burn map without permitting an ada entry. -/
-def mintValueFromTerm (term : Cbor.Term) : Except Error Value := assetsFromTerm term
-
-end Internal
-
-namespace Value
-
-/-- Decode exactly one output value into checked semantic quantities. Original
-CBOR identity belongs to an enclosing encoded output, not the semantic bundle.
--/
-def ofOutputCbor (bytes : ByteArray) : Except Error CheckedOutput := do
-  Internal.outputValueFromTerm (← Internal.Cbor.decode bytes)
-
-/-- Decode exactly one signed mint/burn map. Duplicate keys, malformed hashes/
-names, out-of-range quantities and trailing bytes are rejected.
--/
-def ofMintCbor (bytes : ByteArray) : Except Error Value := do
-  Internal.mintValueFromTerm (← Internal.Cbor.decode bytes)
 
 end Value
 end Cometa

@@ -123,8 +123,9 @@ to its native/schema boundary and records open APIs and quantity-range limits.
 
 Semantic decoding of values, scripts, Plutus data and complete outputs is now
 implemented. `EncodedOutput` and imported scripts/datums retain exact original
-bytes alongside their semantic views. Duplicate output/asset map keys and unknown
-fields are rejected. Native alternative 6 (require guard) is included with typed
+bytes alongside their semantic views. Native readers and getters provide those
+views; Lean validates copied fields. Duplicate output fields are rejected before
+native parsing, while native policy-map coalescing is preserved. Native alternative 6 (require guard) is included with typed
 key/script credentials; the initial 0–5 inventory was incomplete. VM operations,
 complete transaction assembly, and the extension adapters below remain open.
 
@@ -134,6 +135,20 @@ and all three examples in a clean consumer. Valgrind reports zero errors and
 zero definitely/indirectly lost bytes, with Lean runtime allocations remaining.
 CI repeats the checks and runs the consumer from the release source archive.
 No wallet, live-network, transaction submission or release operation is included.
+
+## Native binding rework
+
+Production component construction, parsing and serialization now delegate to
+cardano-c. The Lean CBOR encoder and decoder have been removed. Credential, value,
+mint, Plutus-data, script and output codecs use audited native constructors,
+readers, getters and writers through explicit `EIO` boundaries. Encoded objects
+cache native-produced bytes for pure inspection. A small legacy-output adapter
+uses the native CBOR writer because the high-level output writer emits maps only.
+
+Pure Lean code retains semantic models, arithmetic, bounds and result validators.
+These are specifications and checked invariants, not replacement native codecs.
+Tests record native acceptance/normalization differences, including oversized
+Plutus leaves and duplicate policy-map coalescing, without claiming ledger validity.
 
 ## Remaining implementation sequence
 

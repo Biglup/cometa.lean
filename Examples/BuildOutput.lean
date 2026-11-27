@@ -48,7 +48,7 @@ private def buildOutput (addressText policyText nameText quantityText lovelaceTe
 
   let datum ← EncodedPlutusData.ofData (.constr 0 [.integer 42])
   let reference ← Script.ofNative (.all [.invalidBefore 100, .invalidAfter 200])
-  EIO.ofExcept (Output.create address value (.inline datum) (some reference))
+  Output.create address value (.inline datum) (some reference)
 
 /-- Check the native codec, then inspect the complete decoded output. -/
 private def report (output : Output) : IO Unit := do

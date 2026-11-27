@@ -20,9 +20,9 @@ import Cometa.Value
 import Cometa.PlutusData
 import Cometa.Script
 
-/-! Complete typed transaction-output construction. Pure validation checks payment
-addresses and quantity bounds; it does not balance a transaction or determine
-minimum ada. Native codec interoperation is a separate, explicit operation.
+/-! Native transaction-output construction and inspection with checked Lean fields.
+Pure validators check payment addresses and quantity bounds; native constructors
+and codecs build the representation. This does not determine minimum ada.
 -/
 
 namespace Cometa
@@ -51,130 +51,90 @@ structure Output where
   referenceScript : Option Script
   /-- The recipient has a payment-address header, rather than a reward header. -/
   paymentAddress : address.isPayment = true
+  private cbor : ByteArray
 
 namespace Output
 
 -- DEFINITIONS ----------------------------------------------------------------
 
-/-- Construct an output with full datum/reference-script support. This checks
-address kind and quantity bounds, not network, era, size, minimum ada or balance.
+private def nativeFields (address : Address) (value : Value) (datum : Datum)
+    (reference : Option Script) : Internal.Component :=
+  let datumFields := match datum with
+    | .none => Internal.Component.node 0 0 ByteArray.empty ByteArray.empty "" []
+    | .hash digest => .node 1 0 digest.bytes ByteArray.empty "" []
+    | .inline data => .node 2 0 data.toCbor ByteArray.empty "" []
+  let scriptFields := match reference with
+    | none => Internal.Component.node 0 0 ByteArray.empty ByteArray.empty "" []
+    | some script => .node 1 0 script.toCbor ByteArray.empty "" []
+  .node 0 0 address.toBytes ByteArray.empty "" [value.toNative, datumFields, scriptFields]
+
+/-- Check destination and quantity invariants, then construct and serialize a
+complete output through cardano-c. This does not balance or establish minimum ada.
 -/
 def create (address : Address) (value : Value) (datum : Datum := .none)
-    (referenceScript : Option Script := none) : Except Error Output := do
+    (referenceScript : Option Script := none) : EIO Error Output := do
   if paymentAddress : address.isPayment = true then
-    return ⟨address, ← value.checkOutput, datum, referenceScript, paymentAddress⟩
+    let checked ← EIO.ofExcept value.checkOutput
+    let fields := nativeFields address value datum referenceScript
+    let bytes ← (Internal.componentEncode 6 fields).adapt (.native "Output.create")
+    return ⟨address, checked, datum, referenceScript, paymentAddress, bytes⟩
   else
     throw (.invalidInput "A reward account cannot receive an output")
 
-/-- Encode a fresh Babbage-style map output, retaining exact inline datum bytes.
-Multi-asset maps are deterministically ordered; absence remains distinct from
-an inline datum or an explicitly supplied reference script.
+/-- Return the map encoding produced by the native output writer at construction.
+This is a cached snapshot; accessing it performs no hidden native effect.
 -/
-def toCbor (output : Output) : ByteArray :=
-  let fields := [(Internal.Cbor.unsigned 0, Internal.Cbor.bytes output.address.toBytes),
-    (Internal.Cbor.unsigned 1, output.value.toCbor)]
-  let fields := match output.datum with
-    | .none => fields
-    | .hash digest => fields ++ [(Internal.Cbor.unsigned 2,
-        Internal.Cbor.array [Internal.Cbor.unsigned 0, Internal.Cbor.bytes digest.bytes])]
-    | .inline data => fields ++ [(Internal.Cbor.unsigned 2,
-        Internal.Cbor.array [Internal.Cbor.unsigned 1,
-          Internal.Cbor.tag 24 (Internal.Cbor.bytes data.toCbor)])]
-  let fields := match output.referenceScript with
-    | none => fields
-    | some script => fields ++ [(Internal.Cbor.unsigned 3,
-        Internal.Cbor.tag 24 (Internal.Cbor.bytes script.toCbor))]
-  Internal.Cbor.map fields
+def toCbor (output : Output) : ByteArray := output.cbor
 
-/-- Encode a legacy array output. Inline data and reference scripts are rejected;
-legacy arrays support only an absent datum or a 32-byte datum hash.
+/-- Encode a legacy array using the native CBOR writer and native value codec.
+The pinned output writer emits maps only, so this compatibility adapter explicitly
+writes the legacy container. Inline data and reference scripts are rejected.
 -/
-def toLegacyCbor (output : Output) : Except Error ByteArray := do
+def toLegacyCbor (output : Output) : EIO Error ByteArray := do
   if output.referenceScript.isSome then
     throw (.invalidInput "Legacy outputs cannot carry reference scripts")
-  let fields := [Internal.Cbor.bytes output.address.toBytes, output.value.toCbor]
-  match output.datum with
-  | .none => return Internal.Cbor.array fields
-  | .hash digest => return Internal.Cbor.array (fields ++ [Internal.Cbor.bytes digest.bytes])
-  | .inline _ => throw (.invalidInput "Legacy outputs cannot carry inline data")
+  if let .inline _ := output.datum then
+    throw (.invalidInput "Legacy outputs cannot carry inline data")
+  (Internal.componentEncode 7 (nativeFields output.address output.value.val output.datum none)).adapt (.native "Output.toLegacyCbor")
 
-/-- Parse and serialize this output through the actual pinned C codec. This is
-useful for native integration and conformance checks; it is not ledger validation.
-The returned bytes may use native-normalized encodings.
--/
+/-- Reparse and serialize the cached output using the native codec. -/
 def toNativeCbor (output : Output) : EIO Error ByteArray :=
   (Internal.outputRoundTrip output.toCbor).adapt (.native "Output.toNativeCbor")
 
-/-- Run the actual C codec and check exact agreement with the constructed bytes.
-The returned evidence concerns this observed result, not every execution of C.
-Use `toNativeCbor` directly when inspecting normalization differences.
+/-- Check native round-trip stability for this output. The evidence concerns this
+observed result, not an independent codec or a universal theorem about C.
 -/
 def checkNativeEncoding (output : Output) :
     EIO Error {bytes : ByteArray // bytes = output.toCbor} := do
   let bytes ← output.toNativeCbor
   if agreement : bytes = output.toCbor then return ⟨bytes, agreement⟩
-  else throw (.invalidInput "Native output encoding differs from the constructed encoding")
+  else throw (.invalidInput "Native output round trip changed its encoding")
 
 -- DECODING -------------------------------------------------------------------
 
-private structure Parts where
-  address : Internal.Cbor.Term
-  value : Internal.Cbor.Term
-  datum : Option Internal.Cbor.Term := none
-  script : Option Internal.Cbor.Term := none
+private def decodeDatum : Internal.Component → EIO Error Datum
+  | .node 0 _ _ _ _ _ => pure .none
+  | .node 1 _ bytes _ _ _ => return .hash (← EIO.ofExcept (Hash.ofBytes bytes))
+  | .node 2 _ bytes _ _ _ => return .inline (← EncodedPlutusData.ofCbor bytes)
+  | _ => throw (.invalidInput "Invalid native datum snapshot")
 
-private def outputParts : Internal.Cbor.Term → Except Error Parts
-  | .array [address, value] => return ⟨address, value, none, none⟩
-  | .array [address, value, digest] =>
-    return ⟨address, value, some (.array [.unsigned 0, digest]), none⟩
-  | .map fields => do
-    let mut address := none
-    let mut value := none
-    let mut datum := none
-    let mut script := none
-    let mut seen : List UInt64 := []
-    for (key, item) in fields do
-      let key ← key.asUnsigned
-      if seen.contains key then throw (.invalidInput "Duplicate output field")
-      seen := key :: seen
-      match key with
-      | 0 => address := some item
-      | 1 => value := some item
-      | 2 => datum := some item
-      | 3 => script := some item
-      | _ => throw (.invalidInput "Unknown output field")
-    let some destination := address | throw (.invalidInput "Missing output address")
-    let some amount := value | throw (.invalidInput "Missing output value")
-    return ⟨destination, amount, datum, script⟩
-  | _ => throw (.invalidInput "Expected an output array or map")
-
-private def decodeDatum : Internal.Cbor.Term → EIO Error Datum
-  | .array [.unsigned 0, digest] => do
-    let bytes ← EIO.ofExcept digest.asBytes
-    return .hash (← EIO.ofExcept (Hash.ofBytes bytes))
-  | .array [.unsigned 1, embedded] => do
-    let bytes ← EIO.ofExcept embedded.asEmbedded
-    return .inline (← EncodedPlutusData.ofCbor bytes)
-  | _ => throw (.invalidInput "Invalid output datum option")
-
-/-- Decode a legacy array or map output into checked fields. Re-encoding this
-semantic value produces a fresh map; use `EncodedOutput` to retain input bytes.
-Unknown fields, duplicate keys, malformed embeddings and invalid bounds fail.
+/-- Parse through the native output codec, copy its complete getter results, and
+check public invariants. The resulting encoding is produced by the native map
+writer; `EncodedOutput` separately retains the original input representation.
 -/
 def ofCbor (bytes : ByteArray) : EIO Error Output := do
-  let parts ← EIO.ofExcept (Internal.Cbor.decode bytes >>= outputParts)
-  let addressBytes ← EIO.ofExcept parts.address.asBytes
+  let .node _ _ addressBytes _ _ fields ←
+    (Internal.componentDecode 6 bytes).adapt (.native "Output.ofCbor")
+  let [valueFields, datumFields, scriptFields] := fields
+    | throw (.invalidInput "Incomplete native output snapshot")
   let address ← Address.ofBytes addressBytes
-  let value ← EIO.ofExcept (Internal.outputValueFromTerm parts.value)
-  let datum ← match parts.datum with
-    | none => pure Datum.none
-    | some item => decodeDatum item
-  let reference : Option Script ← match parts.script with
-    | none => pure none
-    | some item => do
-      let embedded ← EIO.ofExcept item.asEmbedded
-      pure (some (← Script.ofCbor embedded))
-  EIO.ofExcept (create address value.val datum reference)
+  let value ← EIO.ofExcept (Value.ofNative valueFields)
+  let datum ← decodeDatum datumFields
+  let reference : Option Script ← match scriptFields with
+    | .node 0 _ _ _ _ _ => pure none
+    | .node 1 _ scriptBytes _ _ _ => pure (some (← Script.ofCbor scriptBytes))
+    | _ => throw (.invalidInput "Invalid native reference-script snapshot")
+  create address value datum reference
 
 -- THEOREMS -------------------------------------------------------------------
 
