@@ -67,7 +67,7 @@ independent-consumer checks, memory checks, and API documentation generation.
 | --- | --- |
 | [InspectAddress.lean](Examples/InspectAddress.lean) | Parse a recipient and amount, then construct an ordered payment plan. |
 | [InspectTransaction.lean](Examples/InspectTransaction.lean) | Read transaction CBOR, calculate its ID, and inspect its fee, inputs, and output summaries. |
-| [BuildOutput.lean](Examples/BuildOutput.lean) | Construct a multi-asset output with inline data and a native reference script, then check its encoding through C. |
+| [BuildOutput.lean](Examples/BuildOutput.lean) | Construct a multi-asset output, check its encoding through C, and decode its assets, inline datum and reference script. |
 
 All are complete single-file programs. These offline examples do not build,
 sign, or submit transactions.
@@ -137,9 +137,10 @@ reference script. It does not mint that asset or submit a transaction.
 add and zero totals disappear when inspecting or encoding the bundle. An output
 must pass `Value.checkOutput`; mint/burn serialization uses separate signed bounds.
 `Output.create` accepts all three datum forms and an optional reference script.
+It returns `EIO Error Output`: cardano-c constructs the output and writes its CBOR.
 
 `Script.ofNative` covers signatures, all/any/threshold combinations, and validity
-bounds. `Script.ofPlutus` supports V1 through V4 as opaque compiled programs, with
+bounds, and require-guard credentials. `Script.ofPlutus` supports V1 through V4 as opaque compiled programs, with
 native-computed hashes. `PlutusData` covers constructors, ordered maps/lists,
 arbitrary integers, and bytes; imported datum encodings retain their identity.
 Language support does not imply activation on a particular network.
@@ -147,7 +148,7 @@ Language support does not imply activation on a particular network.
 `Value.quantity_add` proves per-asset conservation under addition, and
 `Value.checkOutput_sound` proves the validator's quantity guarantee.
 `Output.checkNativeEncoding` runs the real C codec and returns bytes with evidence
-of equality to this output's Lean encoding. That evidence is specific to the
+of equality to this output's cached native encoding. That evidence is specific to the
 checked result, not a universal proof of the C serializer.
 
 ## Documentation and conventions
@@ -169,3 +170,47 @@ Licensed under [Apache-2.0](LICENSE).
 Release archives and the manual publication workflow are described in
 [Releasing](docs/releasing.md). Reservoir indexes the GitHub repository; there is
 no separate package upload to Reservoir.
+
+### Inspect complete output fields
+
+`Output.ofCbor` decodes legacy arrays and map outputs into checked addresses,
+asset quantities, datum forms, and reference scripts. Use `EncodedOutput` when
+the original representation must survive inspection:
+
+```lean
+def inspectOutput (bytes : ByteArray) : IO Unit := do
+  let encoded ← (EncodedOutput.ofCbor bytes).toIO (IO.userError ∘ toString)
+  let output := encoded.toOutput
+
+  IO.println s!"Recipient: {output.address}"
+  for (asset, quantity) in output.value.val.toList do
+    IO.println s!"{asset}: {quantity}"
+
+  if let some script := output.referenceScript then
+    IO.println s!"Reference script: {script.hash.toHex}"
+  IO.println s!"Original CBOR: {Hex.ofBytes encoded.toCbor}"
+```
+
+`encoded.toCbor` returns the exact imported bytes; `output.toCbor` produces a
+cached map encoding produced by the native writer. `Script.ofCbor` and `EncodedPlutusData.ofCbor` likewise retain
+imported bytes and their native-computed hashes while exposing `view` and
+`toData`. Native-backed semantic decoders return `EIO Error` through `Value.ofOutputCbor`,
+`Value.ofMintCbor`, `NativeScript.ofCbor`, and `PlutusData.ofCbor`.
+These checks validate component structure and representable bounds, not ledger
+acceptance. Native scripts include all seven pinned alternatives, including
+Dijkstra require-guard scripts; availability still depends on the target era.
+
+### Native implementation and Lean proofs
+
+Parsing and serialization use cardano-c constructors, readers, getters, and
+writers for credentials, values, mint maps, Plutus data, scripts, and outputs.
+Lean owns copied snapshots and checks their public invariants; there is no Lean
+CBOR encoder or decoder. `PlutusData.toCbor`, `NativeScript.toCbor`,
+`Credential.toCbor`, and value codecs expose native effects through `EIO`.
+Byte accessors on already encoded objects simply return cached bytes.
+
+`Value` arithmetic and `Plan` composition are pure specification/convenience
+models. Their theorems describe those models and executable validators, not the
+native algorithms. Native parsing is not ledger validation: the pinned datum
+reader accepts oversized byte leaves, and its multi-asset reader coalesces
+repeated policy maps. Imported encoded wrappers retain the supplied bytes.

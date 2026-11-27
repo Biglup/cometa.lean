@@ -19,6 +19,7 @@
 
 #include <cardano/cardano.h>
 #include <lean/lean.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* DEFINITIONS ***************************************************************/
@@ -394,6 +395,11 @@ cometa_lean_script_hash(b_lean_obj_arg bytes)
     code = cardano_script_from_cbor(reader, &script);
     if (code == CARDANO_SUCCESS)
     {
+      /* The pinned script parser leaves its envelope's array ending unread. */
+      code = cardano_cbor_reader_read_end_array(reader);
+    }
+    if (code == CARDANO_SUCCESS)
+    {
       code = require_end(reader);
     }
     if (code == CARDANO_SUCCESS)
@@ -430,3 +436,5 @@ cometa_lean_output_round_trip(b_lean_obj_arg bytes)
   cardano_cbor_reader_unref(&reader);
   return code == CARDANO_SUCCESS ? lean_io_result_mk_ok(encoded) : native_error(code);
 }
+
+#include "cometa_components.h"

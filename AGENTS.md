@@ -38,3 +38,7 @@ Read [CODING_CONVENTIONS.md](CODING_CONVENTIONS.md) before editing.
   concrete C instances through audited adapters as well as custom Lean callbacks.
 - Separate pure proofs and proved result validators from native conformance tests.
   Never assert C correctness as an axiom or infer it from successful FFI execution.
+
+- Bind production parsing, serialization and transaction operations to cardano-c.
+  Keep Lean semantic models and proved validators distinct from native execution;
+  do not add a parallel production codec to make proofs easier.

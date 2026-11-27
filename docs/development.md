@@ -36,7 +36,7 @@ lake exe inspectTransaction Examples/transaction.cbor.hex
 python3 scripts/check-source.py
 python3 -m unittest discover -s Tests/Packaging -v
 python3 scripts/check-consumer.py
-clang-format-18 --dry-run --Werror cbits/cometa_lean.c
+clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h
 ```
 
 Lake runs native preparation before compiling the adapter. It downloads cardano-c
@@ -151,8 +151,8 @@ collateral exclusion, 64-bit bounds, and repeated native allocation paths.
 mint encodings impose their respective native bounds. Addition is modeled by a
 finite sequence of signed entries; observations aggregate duplicates, and zero
 aggregates disappear. This representation keeps the quantity law independent of
-map normalization. Encoding groups native assets by policy and sorts encoded map
-keys by length then bytes, matching the pinned native asset-map comparator.
+map normalization. Native constructors receive the checked quantities; native
+map writers choose policy/name ordering. Lean contains no production CBOR codec.
 
 The new audit covers `lib/src/assets/asset_name_map.c`,
 `lib/src/plutus_data/plutus_data.c`, `lib/src/scripts/script.c`, the native-script
@@ -160,7 +160,7 @@ and Plutus V1–V4 implementations, and the existing output/value codecs. Native
 script thresholds use `size_t`; the public UInt64 range matches the supported
 64-bit platforms. Hash getters return owned references. Datum hashing consumes
 exact original bytes after native parsing, including nonminimal encodings.
-The additional pure import scan enforces the 64-byte datum leaf/chunk bound.
+The pinned reader accepts oversized byte leaves; parsing is not ledger validation.
 
 The three externs in `Cometa.Internal.Output` borrow a byte array and return
 `EIO UInt32 ByteArray`. Generated C in the Script, PlutusData and Output modules
@@ -169,7 +169,7 @@ layout. Readers, writers, parsed data/scripts/outputs and hashes are unreference
 on every return path. All returned bytes are copied into Lean ownership.
 
 `Output.checkNativeEncoding` calls the actual output codec and compares its result
-with the pure constructed encoding. Success returns a subtype carrying equality
+with the cached native construction encoding. Success returns a subtype carrying equality
 for that observed result. The proof does not assert universal correctness of the
 C codec, script execution, minimum ada, or ledger acceptance. Value bounds and the
 payment-header property have separate model proofs. Provider/evaluator/selector
@@ -206,3 +206,43 @@ The ordinary caller workflow is parse address, validate amount and destination,
 construct a plan, inspect its payments. Proofs establish accounting and composition
 laws for that model only. Wallet unlocking, signing, providers, balancing, and
 submission are not yet implemented and are not represented by placeholder APIs.
+
+## Native component adapter audit
+
+`Cometa.Internal.Component` transports copied fields, not CBOR syntax or native
+handles. `cbits/cometa_components.h` is included once by the bridge translation
+unit and tracked as a Lake build input. Families select the concrete credential,
+value, multi-asset, Plutus-data, native-script, script, or output implementation.
+Encoding calls native constructors and `*_to_cbor`; decoding calls native
+`*_from_cbor` and getters. The legacy-output adapter uses the native CBOR writer
+because the pinned high-level output writer only emits maps.
+
+Generated C for Lean 4.36 confirms two arguments per entry point: unboxed UInt8
+family and borrowed object, with the world erased. `Component.node` has four
+owned object fields (bytes, extra bytes, decimal text, children) and two UInt64
+scalar fields at offsets `4 * sizeof(void*)` and `4 * sizeof(void*) + 8`.
+Decimal text transports arbitrary integers without narrowing; the adapter uses
+native bigint conversion. Child lists are copied recursively. Constructors retain
+child references; getters returning objects acquire references. Unref can leave a
+non-null pointer when another owner retains it, so released locals are reset
+before shared cleanup. Native buffers are copied before their owners are released.
+
+The native output parser overwrites duplicate map fields without releasing the
+previous reference. A small guard uses the native CBOR reader to reject duplicate
+or missing fields before parsing; it does not decode the field payloads. Asset
+snapshot validation rejects duplicate asset identities still present in native
+getter results. Native policy-map coalescing remains observable and documented.
+Plutus map snapshots use parallel key/value lists, preserving duplicate pairs.
+
+The pinned `cardano_script_from_cbor` leaves its outer array ending unread. The
+adapter consumes that ending before its complete-input check, allowing indefinite
+envelopes while rejecting trailing items. Native-script payload caches remain
+intact for hashing. Tests distinguish changes to the outer envelope from changes
+to the hashed payload using an independent Python `hashlib.blake2b` vector.
+
+Tests exercise all native variants, every truncated prefix across all seven
+families, trailing bytes, repeated getter ownership, exact imported hashes, and
+independent construction vectors. Native list construction chooses indefinite
+nonempty Plutus lists; imported definite lists retain their original identity.
+`Output.checkNativeEncoding` checks native round-trip stability only. It is not an
+independent serializer comparison or a universal proof about the native codec.

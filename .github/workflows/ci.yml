@@ -47,7 +47,7 @@ jobs:
         run: |
           python3 scripts/check-source.py
           python3 -m unittest discover -s Tests/Packaging -v
-          clang-format-18 --dry-run --Werror cbits/cometa_lean.c
+          clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h
       - name: Build and test with automatic native setup
         run: |
           lake build cometaTests inspectAddress inspectTransaction buildOutput

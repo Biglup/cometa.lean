@@ -43,10 +43,10 @@ audit. Reconcile the baseline whenever upstream changes.
 | Area | Required public capabilities | Current Lean coverage |
 | --- | --- | --- |
 | Primitive values | Addresses/credentials and their construction, networks, hashes, transaction IDs, asset IDs/names, bounded coin/asset quantities, rationals and slots | Address parsing, fixed-size hashes, transaction/policy/asset IDs and names; other primitive families remain open |
-| Values and outputs | Multi-asset values, complete outputs, datum hashes/inline datums, reference scripts, exact encodings where required | Signed bundles, output/mint encoding, typed map/legacy output construction, all datum forms and reference scripts; semantic decoding remains open |
+| Values and outputs | Multi-asset values, complete outputs, datum hashes/inline datums, reference scripts, exact encodings where required | Signed bundles, output/mint encoding, typed map/legacy output construction, all datum forms and reference scripts; semantic decoding implemented |
 | Inputs and UTxOs | Spending/reference/collateral inputs, resolved outputs, uniqueness and disjointness rules | Spending-reference inspection only |
 | Body fields | Fee, validity interval, network, mint/burn, withdrawals, certificates, required signers/guards, hashes, collateral/return/total, legacy updates and all optional fields | Fee and spending/output inspection only |
-| Scripts and data | Every native-script variant; pinned Plutus V1/V2/V3/V4 support; arbitrary Plutus data, script/datum hashes and language discrimination | Typed native scripts, Plutus V1–V4 wrappers/hashes, all Plutus data constructors, checked imported datum bytes; semantic decoding and VM operations remain open |
+| Scripts and data | Every native-script variant; pinned Plutus V1/V2/V3/V4 support; arbitrary Plutus data, script/datum hashes and language discrimination | Typed native scripts, Plutus V1–V4 wrappers/hashes, all Plutus data constructors, checked imported datum bytes; semantic decoding implemented; VM operations remain open |
 | Witnesses and redeemers | Verification-key and bootstrap witnesses, native/Plutus script witnesses, datums, all redeemer purposes, budgets, purpose/index mapping, merging and signing | Opaque preservation only |
 | Metadata and auxiliary data | All metadata forms, scripts, auxiliary-data encoding/hash and body commitment | Opaque preservation only |
 | Staking and pools | All certificate variants, registration/deregistration, delegation and combinations, pool registration/retirement, relays/metadata/owners, reward withdrawals and applicable BLS fields | Missing |
@@ -74,11 +74,11 @@ This is a construction slice, not closure of the full component-API rows.
 | Feature / native or schema boundary | Public Lean API | Evidence and remaining scope |
 | --- | --- | --- |
 | 28-byte policy hashes; 0–32-byte names | `Hash`, `PolicyId`, `AssetName`, `AssetId` | Length proofs; binary/UTF-8 boundary tests; credential roles and address construction remain open |
-| Coin/multi-asset value and mint maps; native value/asset-map readers reached through output/body parsing | `Value.ofList`, `quantity`, arithmetic, `checkOutput`, `toOutputCbor`, `toMintCbor` | Aggregation/zero removal, signed limits, canonical policy/name ordering, native output and mint parsing; `quantity_add` and `checkOutput_sound`; value decoding remains open |
-| Output arrays/maps and datum tags 0/1; `cardano_transaction_output_from_cbor` / `to_cbor` | `Output.create`, `toCbor`, `toLegacyCbor`, `toNativeCbor`, `checkNativeEncoding` | Full rich-output fixture, legacy conversion, all datum/reference combinations, truncation/trailing failures; output quantity/payment-header proofs and a checked native-result equality; typed imported-output decoding remains open |
-| Native script kinds 0–5; `cardano_script_from_cbor` / `get_hash` | `NativeScript` and `Script.ofNative` | All constructors, nested scripts, 64-bit threshold/slot boundaries, independent signature-script hash; native script decoding remains open |
-| Script language tags 1–4 | `PlutusVersion`, `Script.ofPlutus`, `view`, `toCbor`, `hash` | Independent language-discriminated hashes and reference-output round trips for every version; program execution, parameter application and semantic decoding remain open |
-| Plutus constructors 121–127 / 1280–1400 / 102; maps/lists/integers/bytes; `cardano_plutus_data_from_cbor` and `cardano_blake2b_compute_hash` | `PlutusData.toCbor`, `EncodedPlutusData.ofData`, `ofCbor`, `toCbor`, `hash` | Independent vectors, arbitrary signed bignums, 64-byte chunks, preserved nonminimal identity, malformed imports; imported semantic-tree decoding remains open |
+| Coin/multi-asset value and mint maps; `cardano_value_new/from_cbor/to_cbor` and `cardano_multi_asset_new/from_cbor/to_cbor` | `Value.ofList`, `quantity`, arithmetic, `checkOutput`, `toOutputCbor`, `toMintCbor` | Aggregation/zero removal, signed limits, canonical policy/name ordering, native output and mint parsing; `quantity_add` and `checkOutput_sound`; native output/mint semantic decoding and checked getter snapshots |
+| Output arrays/maps and datum tags 0/1; `cardano_transaction_output_from_cbor` / `to_cbor` | `Output.create`, `toCbor`, `toLegacyCbor`, `toNativeCbor`, `checkNativeEncoding` | Full rich-output fixture, legacy conversion, all datum/reference combinations, truncation/trailing failures; output quantity/payment-header proofs and a checked native-result equality; `Output.ofCbor` and exact `EncodedOutput` imports |
+| Native script kinds 0–6 (including require guard); native variant constructors/getters; `cardano_script_from_cbor` / `get_hash` | `NativeScript` and `Script.ofNative` | All constructors, nested scripts, 64-bit threshold/slot boundaries, independent signature-script hash; semantic decoding and exact imported script hashes |
+| Script language tags 1–4 | `PlutusVersion`, `Script.ofPlutus`, `view`, `toCbor`, `hash` | Independent language-discriminated hashes and reference-output round trips for every version; semantic decoding implemented; program execution and parameter application remain open |
+| Plutus constructors 121–127 / 1280–1400 / 102; maps/lists/integers/bytes; `cardano_plutus_data_new_*`, `from_cbor`, `to_cbor`, typed getters and `cardano_blake2b_compute_hash` | `PlutusData.toCbor`, `EncodedPlutusData.ofData`, `ofCbor`, `toCbor`, `hash` | Independent vectors, arbitrary signed bignums, 64-byte chunks, preserved nonminimal identity, malformed imports; `PlutusData.ofCbor` and `EncodedPlutusData.toData` semantic views |
 
 The C value implementation uses signed 64-bit native-asset quantities. This slice
 checks that native bound explicitly; it must not be advertised as establishing
@@ -87,10 +87,16 @@ pure signed model. A native/ledger range mismatch must be resolved before the
 full-parity completion claim. Lovelace output encoding retains all unsigned
 64-bit bits, with a native round-trip regression.
 
-The native datum reader is permissive about byte-string lengths. The Lean import
-boundary additionally checks every definite byte leaf/chunk (including bignums)
-against 64 bytes before invoking the native grammar parser. Constructed data
-uses bounded chunks automatically. No application datum schema is inferred.
+All component production codecs now delegate to cardano-c. Lean checks copied
+hash lengths, asset names, destination kinds, and quantity bounds. The pure
+`Value` arithmetic model remains distinct from C operations. The native datum
+reader accepts oversized byte leaves; its multi-asset reader can coalesce repeated
+policy maps. These behaviors are tested and are not ledger-validity guarantees.
+Constructed datum chunking and container choices belong to the native writer.
+Duplicate output fields are rejected using the native CBOR reader before invoking
+the pinned output parser, whose overwrite path can otherwise leak a reference.
+The native output writer only emits maps; the explicit legacy adapter uses the
+native CBOR writer plus native value serialization for its array representation.
 
 These checks are offline Linux x86_64 checks. There is no network/era activation
 or script-execution claim. The provider/evaluator/selector adapters and their

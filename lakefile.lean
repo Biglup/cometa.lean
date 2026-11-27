@@ -48,6 +48,10 @@ input_file bridgeSource where
   path := "cbits" / "cometa_lean.c"
   text := true
 
+input_file componentSource where
+  path := "cbits" / "cometa_components.h"
+  text := true
+
 target nativeLibrary _pkg : Dynlib := do
   let file ← nativeLibraryFile.fetch
   file.mapM fun path => do
@@ -55,11 +59,14 @@ target nativeLibrary _pkg : Dynlib := do
 
 target bridgeObject pkg : FilePath := do
   let source ← bridgeSource.fetch
+  let components ← componentSource.fetch
   let native ← nativeLibraryFile.fetch
   let flags := #["-I", (← getLeanIncludeDir).toString,
     "-I", (pkg.dir / ".lake" / "native" / "include").toString]
   buildO (pkg.buildDir / "c" / "cometa_lean.o") source flags
     #["-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror"] "cc" do
+      let _ ← components.await
+      addTrace components.getTrace
       addTrace (← getLeanTrace)
       let _ ← native.await
       addTrace native.getTrace
@@ -85,7 +92,8 @@ lean_lib Cometa where
   precompileModules := true
 
 lean_lib TestSupport where
-  roots := #[`Tests.Transaction, `Tests.TransactionFixtures, `Tests.Output, `Tests.OutputFixtures]
+  roots := #[`Tests.Transaction, `Tests.TransactionFixtures, `Tests.Output, `Tests.OutputFixtures,
+    `Tests.Decoding]
 
 @[test_driver]
 lean_exe cometaTests where
