@@ -1164,7 +1164,10 @@ cleanup:
 
 #include "cometa_withdrawals.h"
 
-/* Body construction depends on the withdrawal helpers above. */
+/* Body assembly also uses the auxiliary-data helpers. */
+#include "cometa_auxiliary.h"
+
+/* Body construction depends on the helpers above. */
 #include "cometa_transaction_build.h"
 
 /* FOREIGN ENTRY POINTS ******************************************************/
@@ -1178,6 +1181,33 @@ cometa_lean_component_encode(uint8_t family, b_lean_obj_arg fields)
   lean_object*    bytes = NULL;
   switch (family)
   {
+    case 14:
+    {
+      cardano_metadatum_t* value = NULL;
+      code                       = build_metadatum(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_metadatum(value, &bytes);
+      cardano_metadatum_unref(&value);
+      break;
+    }
+    case 15:
+    {
+      cardano_transaction_metadata_t* value = NULL;
+      code                                  = build_metadata(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_metadata(value, &bytes);
+      cardano_transaction_metadata_unref(&value);
+      break;
+    }
+    case 16:
+    {
+      cardano_auxiliary_data_t* value = NULL;
+      code                            = build_auxiliary(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_auxiliary(value, &bytes);
+      cardano_auxiliary_data_unref(&value);
+      break;
+    }
     case 12:
     {
       cardano_reward_address_t* value = NULL;
@@ -1318,6 +1348,33 @@ cometa_lean_component_decode(uint8_t family, b_lean_obj_arg bytes)
   lean_object*    fields = NULL;
   switch (family)
   {
+    case 14:
+    {
+      cardano_metadatum_t* value = NULL;
+      code                       = parse_metadatum(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_metadatum(value, &fields);
+      cardano_metadatum_unref(&value);
+      break;
+    }
+    case 15:
+    {
+      cardano_transaction_metadata_t* value = NULL;
+      code                                  = parse_metadata(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_metadata(value, &fields);
+      cardano_transaction_metadata_unref(&value);
+      break;
+    }
+    case 16:
+    {
+      cardano_auxiliary_data_t* value = NULL;
+      code                            = parse_auxiliary(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_auxiliary(value, &fields);
+      cardano_auxiliary_data_unref(&value);
+      break;
+    }
     case 12:
     {
       cardano_reward_address_t* value = NULL;

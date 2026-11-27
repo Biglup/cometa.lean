@@ -41,9 +41,14 @@ The reader rejects trailing bytes; failure returns a boxed native error code.
 opaque transactionFromCbor (bytes : @& ByteArray) : EIO UInt32 RawTransaction
 
 /-- Build a native transaction with this body, an empty native witness set and
-no auxiliary data. The native body cache retains imported encoding identity.
+optional auxiliary data (empty bytes mean absent). Native caches retain imported identity.
 -/
 @[extern "cometa_lean_unsigned_transaction"]
-opaque unsignedTransaction (body : @& ByteArray) (scriptValidity : Bool) : EIO UInt32 ByteArray
+opaque unsignedTransaction (body : @& ByteArray) (scriptValidity : Bool)
+    (auxiliary : @& ByteArray) : EIO UInt32 ByteArray
+
+/-- Extract exact auxiliary bytes from a native transaction; empty means absent. -/
+@[extern "cometa_lean_transaction_auxiliary"]
+opaque transactionAuxiliary (bytes : @& ByteArray) : EIO UInt32 ByteArray
 
 end Cometa.Internal

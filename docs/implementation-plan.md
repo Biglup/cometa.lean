@@ -170,7 +170,7 @@ consumer and source-archive consumer now run all four examples.
 Remaining typed body families are certificates, updates, voting,
 proposals and contextual/subtransaction/account fields. They are retained in
 imported bytes but block `toConfig` reconstruction. Empty guards also block
-reconstruction because the pinned native writer omits them. Witness/auxiliary
+reconstruction because the pinned native writer omits them. Witness
 assembly and extension adapters remain required; this slice is not full parity.
 
 ## Native reward-withdrawal slice
@@ -192,9 +192,35 @@ licenses, packaging regressions, API docs and all five clean-consumer examples
 pass. Valgrind reports zero errors and no definitely or indirectly lost bytes.
 The consumer used the checksum-verified offline native archive.
 
-Certificates, governance, updates, contextual fields, witnesses, auxiliary data,
+Certificates, governance, updates, contextual fields, witnesses,
 and the extension adapters remain required. Rewards querying and authorization
 are not implemented by this slice.
+
+## Native metadata and auxiliary-data slice
+
+Added all five native metadata forms, checked UInt64 label maps, metadata/native
+script/Plutus V1–V4 auxiliary fields, exact native hashing and transaction attachment.
+`Transaction.withAuxiliaryData` checks the body commitment and verifies the native
+result's body ID and exact payload. `checkCommitment_sound` proves equality between
+a supplied commitment and the observed hash; it does not certify native hashing.
+The single-file `BuildMetadataTransaction` example runs in clean source and archive
+consumers alongside the previous five examples.
+
+Construction uses native codecs throughout. Metadata checks include the ledger
+integer range, 64-byte binary/UTF-8 text leaves, strict UTF-8, NUL preservation and
+unique top-level labels. Tests cover all variants together, independent CBOR/hash
+vectors, empty/absent fields, native historical formats, original-cache retention,
+wrong commitments and repeated success/error ownership.
+
+Local Linux x86_64 native tests, interpreter/privacy checks, kernel checking,
+format/license checks, 17 packaging regressions, docs and six clean-consumer
+examples pass. Valgrind reports zero errors and no definitely/indirectly lost
+bytes. Consumer setup uses the checksum-verified offline native archive.
+
+Typed historical auxiliary encoding selection and the native parser's rejection
+of indefinite two-element historical arrays remain recorded gaps. Witnesses,
+advanced body fields, protocol parameters and extension adapters are still required.
+No balancing, signing, script evaluation or live submission is added by this slice.
 
 ## Remaining implementation sequence
 

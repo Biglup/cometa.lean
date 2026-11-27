@@ -15,6 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -/
 
+import Cometa.AuxiliaryData
 import Cometa.Address
 import Cometa.Lovelace
 import Cometa.OutputReference
@@ -98,11 +99,37 @@ observed native ID. A declared script-validity flag is not an evaluation result.
 The transaction is not balanced, signed, or ready for submission by this operation.
 -/
 def ofBody (body : TransactionBody) (scriptValidity : Bool := true) : EIO Error Transaction := do
-  let bytes ← (Internal.unsignedTransaction body.toCbor scriptValidity).adapt (.native "Transaction.ofBody")
+  let bytes ← (Internal.unsignedTransaction body.toCbor scriptValidity ByteArray.empty).adapt (.native "Transaction.ofBody")
   let transaction ← ofCbor bytes
   if transaction.identifier != body.id then
     throw (.invalidInput "Native assembly changed the transaction body ID")
   return transaction
+
+/-- Assemble an unsigned transaction with auxiliary data whose exact hash must
+match body field 7. Neither the body nor auxiliary cache is rebuilt. A mismatch
+or missing commitment fails before assembly; scripts are not evaluated.
+-/
+def withAuxiliaryData (body : TransactionBody) (auxiliary : AuxiliaryData)
+    (scriptValidity : Bool := true) : EIO Error Transaction := do
+  let _ ← EIO.ofExcept (auxiliary.checkCommitment body.view.auxiliaryDataHash)
+  let bytes ← (Internal.unsignedTransaction body.toCbor scriptValidity auxiliary.toCbor)
+    |>.adapt (.native "Transaction.withAuxiliaryData")
+  let transaction ← ofCbor bytes
+  unless transaction.identifier == body.id do
+    throw (.invalidInput "Native assembly changed the transaction body ID")
+  let observed ← (Internal.transactionAuxiliary bytes).adapt (.native "Transaction.withAuxiliaryData")
+  unless observed == auxiliary.toCbor do
+    throw (.invalidInput "Native assembly changed the auxiliary data")
+  return transaction
+
+/-- Inspect the optional exact auxiliary payload using native transaction getters.
+Metadata bounds and duplicate labels are checked; body-commitment agreement is
+not implied for arbitrary imported transactions.
+-/
+def auxiliaryData (transaction : Transaction) : EIO Error (Option AuxiliaryData) := do
+  let bytes ← (Internal.transactionAuxiliary transaction.cbor).adapt (.native "Transaction.auxiliaryData")
+  if bytes.isEmpty then return none
+  return some (← AuxiliaryData.ofCbor bytes)
 
 /-- Parse strict hexadecimal transaction CBOR. No prefix or whitespace is accepted. -/
 def ofHex (text : String) : EIO Error Transaction := do

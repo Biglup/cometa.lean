@@ -97,6 +97,22 @@ example (account : RewardAccount) : RewardAccount := { account with network := .
 #guard_msgs in
 example (withdrawals : Withdrawals) : Withdrawals := { withdrawals with entries := [] }
 
+/-- error: Unknown constant `Cometa.Metadata.mk` -/
+#guard_msgs in
+#check Metadata.mk
+
+/-- error: Unknown constant `Cometa.AuxiliaryData.mk` -/
+#guard_msgs in
+#check AuxiliaryData.mk
+
+/-- error: invalid {...} notation, constructor for `Metadata` is marked as private -/
+#guard_msgs in
+example (metadata : Metadata) : Metadata := { metadata with entries := [] }
+
+/-- error: invalid {...} notation, constructor for `AuxiliaryData` is marked as private -/
+#guard_msgs in
+example (data : AuxiliaryData) : AuxiliaryData := { data with view := {} }
+
 -- MODEL LAWS -----------------------------------------------------------------
 
 example (left right : Plan) :
@@ -166,3 +182,23 @@ example (withdrawals : Withdrawals) :
   let zero ← EIO.ofExcept (Lovelace.ofNat 0)
   let withdrawals ← Withdrawals.ofList [⟨account, zero⟩]
   return withdrawals.entries.length == 1 : EIO Error Bool).toIO (IO.userError ∘ toString)
+
+example (metadata : Metadata) : (metadata.entries.map Prod.fst).Nodup :=
+  Metadata.labels_unique metadata
+
+example (data : AuxiliaryData) (expected : Option (Hash 32))
+    (success : (data.checkCommitment expected).isOk = true) : expected = some data.hash :=
+  AuxiliaryData.checkCommitment_sound data expected success
+
+/-- info: true -/
+#guard_msgs in
+#eval (do
+  let metadata ← Metadata.ofList [(674, .text "hello")]
+  let auxiliary ← AuxiliaryData.create { metadata := some metadata }
+  let inputs ← InputSet.ofList []
+  let fee ← EIO.ofExcept (Lovelace.ofNat 0)
+  let body ← TransactionBody.create {
+    inputs, outputs := #[], fee, auxiliaryDataHash := some auxiliary.hash }
+  let transaction ← Transaction.withAuxiliaryData body auxiliary
+  return (← transaction.auxiliaryData).any (fun payload => payload.toCbor == auxiliary.toCbor)
+    : EIO Error Bool).toIO (IO.userError ∘ toString)

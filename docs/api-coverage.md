@@ -20,7 +20,7 @@ limitations under the License.
 ## Scope and baseline
 
 Full transaction-building parity is the target. Lean provides typed outputs, core
-transaction bodies, reward withdrawals and unsigned assembly, but
+transaction bodies, reward withdrawals, metadata/auxiliary data and unsigned assembly, but
 complete transaction assembly and workflow dependencies remain open. Every remaining
 row below is a required implementation area, not an optional example backlog.
 
@@ -49,12 +49,12 @@ audit. Reconcile the baseline whenever upstream changes.
 | Body fields | Fee, validity interval, network, mint/burn, withdrawals, certificates, required signers/guards, hashes, collateral/return/total, legacy updates and all optional fields | Native core-body construction and getters for keys 0, 1, 2, 3, 5, 7, 8, 9, 11, 13–18, 21–22; remaining fields listed below |
 | Scripts and data | Every native-script variant; pinned Plutus V1/V2/V3/V4 support; arbitrary Plutus data, script/datum hashes and language discrimination | Typed native scripts, Plutus V1–V4 wrappers/hashes, all Plutus data constructors, checked imported datum bytes; semantic decoding implemented; VM operations remain open |
 | Witnesses and redeemers | Verification-key and bootstrap witnesses, native/Plutus script witnesses, datums, all redeemer purposes, budgets, purpose/index mapping, merging and signing | Opaque preservation only |
-| Metadata and auxiliary data | All metadata forms, scripts, auxiliary-data encoding/hash and body commitment | Opaque preservation only |
+| Metadata and auxiliary data | All metadata forms, scripts, auxiliary-data encoding/hash and body commitment | Native metadata forms and label maps, native/Plutus V1–V4 auxiliary scripts, exact hash and checked attachment; historical encoding selection/native parse limits noted below |
 | Staking and pools | All certificate variants, registration/deregistration, delegation and combinations, pool registration/retirement, relays/metadata/owners, reward withdrawals and applicable BLS fields | Native key/script reward accounts and checked withdrawal maps; certificates, pools and BLS fields remain open |
 | Governance | DReps, committee credentials, anchors, constitution, all governance actions, votes, proposals, deposits/refunds, treasury/donations and parameter changes | Missing |
 | Protocol parameters | Complete snapshots and updates, cost models, prices/budgets, voting thresholds, era-specific fields, version/availability distinctions | Missing |
 | Contextual transactions | Subtransaction bodies/builders/witnesses, guards and required top-level guards, direct deposits, account-balance intervals, starting-balance requirements, contextual indices and batch accounting | Missing |
-| Transaction assembly | Typed construction of every supported body/witness/auxiliary combination; historical/mempool/block frames; exact imported bytes and safe updates | Native unsigned assembly with empty witnesses, exact imported body preservation, and inspection; typed witness/auxiliary assembly remains open |
+| Transaction assembly | Typed construction of every supported body/witness/auxiliary combination; historical/mempool/block frames; exact imported bytes and safe updates | Native unsigned assembly with empty witnesses and optional checked auxiliary data, exact imported body/payload preservation, and inspection; typed witnesses and frame selection remain open |
 | Building and balancing | Explicit fees, minimum ada, execution/reference-script fees, deposits/refunds, mint/burn/withdrawal accounting, change, collateral, witness estimates, budgets, hashes and convergence | Lovelace payment-intention model only |
 | Keys and wallets | Encrypted wallet interop, derivation, supported signing/witness paths, external signer injection and secret cleanup | Missing |
 | Providers and lifecycle | All query/evaluation/submission/confirmation operations, built-in backends and custom/native adapters | Missing |
@@ -108,6 +108,29 @@ Original map bytes are retained by `Withdrawals`; embedding a map in a newly bui
 body normalizes its encoding through the native writer. Existing body bytes remain
 unchanged during assembly. No rewards query, registration, authorization, minimum
 fee or script execution is established by these offline checks.
+
+### Metadata and auxiliary-data evidence
+
+| Native boundary | Public Lean API | Evidence / remaining scope |
+| --- | --- | --- |
+| `cardano_metadatum_new_map/list/integer_from_string/bytes/string`, native codecs and typed getters | `Metadatum` constructors, `toCbor/ofCbor` | All five variants; nested/duplicate map pairs retained; Unicode/NUL text, 64-byte UTF-8 bounds, integers -2^64 through 2^64-1; imported bounds checked |
+| Native transaction-metadata constructor, insertion, codec and indexed pair getter | `Metadata.ofList/ofCbor`, `entries/toCbor`, `labels_unique` | Unique UInt64 labels, native ordering, maximum labels, absent/empty and nonminimal input; theorem concerns checked getter snapshots |
+| Native auxiliary constructor, metadata/native/Plutus V1–V4 setters/getters, codec and hash | `AuxiliaryData.Config`, `create/ofCbor/view/toCbor/hash` | Combined six-field independent CBOR/hash vector; all empty fields preserved; original cache retained; complete semantic reconstruction |
+| `cardano_transaction_new/get_auxiliary_data` with native body/auxiliary caches | `Transaction.withAuxiliaryData/auxiliaryData`, `AuxiliaryData.checkCommitment` | Reject missing/wrong commitments; verify observed body ID and payload bytes; exact historical/nonminimal vectors; `checkCommitment_sound` proves checked equality, not native hashing correctness |
+
+New auxiliary objects use the pinned writer's tag-259 map. Metadata-only and
+historical array forms can be imported and retained; typed selection of historical
+output encodings remains open. The pinned parser also accepts a one-element
+historical array and rejects the indefinite two-element historical array. Tests
+record these native behaviors without claiming ledger validity. Resolving that
+native parse limitation remains part of full encoding parity.
+
+Metadata labels must be unique; nested semantic maps retain duplicate pairs.
+Labels and integers are checked independently: labels are UInt64, while negative
+metadata integers extend to -2^64. Byte/text leaves are limited to 64 bytes, with
+strict UTF-8 and embedded NUL preservation for text. Rebuilding a semantic view
+may normalize bytes; keep `toCbor` or the complete imported auxiliary object when
+identity matters. Auxiliary scripts are not witnesses and are not evaluated.
 
 Typed construction is still required for body keys 4 (certificates),
 6 (legacy updates), 19–20 (voting/proposals), and 23–27

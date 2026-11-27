@@ -25,7 +25,7 @@ also available for Linux ARM64 and macOS; availability is not a tested-platform 
 Windows packaging has not been implemented.
 
 ```sh
-lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction withdrawRewards
+lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction withdrawRewards buildMetadataTransaction
 lake test
 lake lean Tests/Invariants.lean
 lake env leanchecker Cometa.Plan
@@ -34,11 +34,13 @@ lake env leanchecker Cometa.Value
 lake env leanchecker Cometa.Output
 lake env leanchecker Cometa.InputSet
 lake env leanchecker Cometa.Withdrawals
+lake env leanchecker Cometa.Metadata
+lake env leanchecker Cometa.AuxiliaryData
 lake exe inspectTransaction Examples/transaction.cbor.hex
 python3 scripts/check-source.py
 python3 -m unittest discover -s Tests/Packaging -v
 python3 scripts/check-consumer.py
-clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h cbits/cometa_withdrawals.h
+clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h cbits/cometa_withdrawals.h cbits/cometa_auxiliary.h
 ```
 
 Lake runs native preparation before compiling the adapter. It downloads cardano-c
@@ -257,8 +259,9 @@ tracked Lake source dependency included once after shared component helpers.
 All returned native references are released, and reused locals are cleared after
 unref. Borrowed scalar pointers from body getters are read while the body lives.
 The unsigned-assembly entry point has generated C signature
-`lean_object* cometa_lean_unsigned_transaction(lean_object*, uint8_t)`: borrowed
-body bytes, unboxed validity flag, erased world and an owned EIO result.
+`lean_object* cometa_lean_unsigned_transaction(lean_object*, uint8_t, lean_object*)`:
+borrowed body/auxiliary bytes, unboxed validity flag, erased world and an owned EIO
+result. Empty auxiliary bytes indicate absence.
 
 The native body parser caches original CBOR. Assembly passes that object directly
 to `cardano_transaction_new` without clearing its cache or rebuilding fields.
@@ -320,3 +323,41 @@ Bech32 encoder from a 30-byte address; the account wrapper must reject it. The
 example reuses the public CIP-19 reward address and synthetic UTxO fixture.
 `Withdrawals.accounts_unique` describes only the checked native snapshot; it is
 not a proof of native algorithm correctness, account rewards, or authorization.
+
+## Metadata and auxiliary-data audit
+
+`cbits/cometa_auxiliary.h` is tracked as a Lake input and included after shared
+component helpers, before body assembly. Families 14–16 use the existing copied
+Component ABI. The source audit covers `lib/src/auxiliary_data/{metadatum,
+metadatum_map,metadatum_list,transaction_metadata,auxiliary_data}.c`, all four
+auxiliary Plutus script-list implementations and `lib/src/transaction/transaction.c`
+at the pinned revision. Constructors retain collection children; getters acquire
+references. All references and intermediate Lean snapshots are released on error.
+
+Metadata integers travel as decimal text to native bigint constructors. Metadata
+text travels as byte buffers with explicit lengths, preserving embedded NULs;
+Lean validates UTF-8 after copying. Indexed map getters preserve duplicate nested
+pairs. Top-level metadata labels are checked for uniqueness separately. Native
+readers accept broader values than ledger metadata, so Lean checks bounds on
+import as well as construction. Production serialization remains entirely native.
+
+The auxiliary writer uses tag 259 and preserves present empty fields. Imported
+auxiliary data keeps its native CBOR cache; native hashing and transaction assembly
+use that cache without rebuilding. The pinned parser accepts metadata-only maps,
+definite historical pairs and one-element historical arrays; it rejects indefinite
+two-element historical arrays. This last limitation is recorded for full encoding
+parity rather than replaced with a Lean codec.
+
+Generated Lean 4.36 C declares the unsigned constructor with borrowed body and
+auxiliary byte arrays plus an unboxed Bool, and the new extraction entry point as
+`lean_object* cometa_lean_transaction_auxiliary(lean_object*)`. Both return owned
+EIO results with no world argument. Extraction copies native cached auxiliary
+bytes and releases the transaction, payload, reader and writer references.
+
+`Tests/Auxiliary.lean` contains literal scalar, nested and six-field auxiliary
+vectors. Expected hashes were independently computed with Python
+`hashlib.blake2b(bytes.fromhex(vector), digest_size=32)`. Tests include UInt64 labels,
+integer endpoints, UTF-8 byte bounds/NULs, all Plutus versions, empty versus absent
+fields, malformed/truncated/trailing data, commitment rejection and exact imported
+body/payload assembly. Constructor privacy and the metadata uniqueness/commitment
+checker laws are checked separately from runtime native conformance.
