@@ -222,6 +222,32 @@ of indefinite two-element historical arrays remain recorded gaps. Witnesses,
 advanced body fields, protocol parameters and extension adapters are still required.
 No balancing, signing, script evaluation or live submission is added by this slice.
 
+## Native external key-witness slice
+
+Added native verification-key witness constructors/codecs/getters, native key hashes
+and Ed25519 verification, plus checked key-witness collections with explicit tagging.
+`Transaction.addKeyWitnesses` verifies both collections, rejects conflicts and calls
+`cardano_transaction_apply_vkey_witnesses`. The actual native result must preserve
+body/auxiliary bytes, other native-serialized witness fields, declared validity and
+the exact union of requested key/signature identities. `checkMerge_sound` proves
+that last observed-result relation, not universal native merging or cryptography.
+
+The file-based `AttachKeyWitnesses` example accepts public CBOR files and needs no
+wallet. Its fixtures contain only public keys/signatures generated independently
+from published native test vectors. Tests cover invalid signatures, signatures over
+nonminimal bodies, all existing witness-field kinds together, tag controls, malformed
+child cleanup, repeated native merging and constructor privacy. The clean/package
+consumers now run seven complete examples.
+
+Validation on Linux x86_64 passed native integration tests, interpreter privacy
+checks, kernel checks for both new modules, all seven clean-source consumer
+examples, 17 packaging tests, source/format/workflow checks and Valgrind with
+zero errors. No live-network or additional-platform validation is claimed.
+
+This completes the external key-witness attachment workflow, not wallet signing or
+full witness parity. Typed bootstrap/script/data/redeemer assembly, signer callbacks,
+secret lifecycle handling and completeness/authorization checks remain required.
+
 ## Remaining implementation sequence
 
 All stages below are required for completion. The sequence keeps each PR testable;

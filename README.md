@@ -42,7 +42,8 @@ The API constructs multi-asset outputs, native and versioned Plutus scripts, and
 Plutus data. It now constructs checked input sets, UTxOs, core transaction bodies,
 reward accounts, withdrawal maps, metadata, auxiliary data, and unsigned transactions
 through cardano-c. Wallets, remaining advanced body
-and witness APIs, balancing, signing, and submission are still being implemented. Proofs describe the Lean models and
+and witness APIs, balancing, wallet signing, and submission are still being implemented.
+Externally supplied key signatures can now be verified and attached natively. Proofs describe the Lean models and
 checked results; they do not verify all cardano-c or ledger execution.
 
 ## Build
@@ -69,11 +70,13 @@ independent-consumer checks, memory checks, and API documentation generation.
 | [InspectTransaction.lean](Examples/InspectTransaction.lean) | Read transaction CBOR, calculate its ID, and inspect its fee, inputs, and output summaries. |
 | [BuildOutput.lean](Examples/BuildOutput.lean) | Construct a multi-asset output, check its encoding through C, and decode its assets, inline datum and reference script. |
 | [BuildTransaction.lean](Examples/BuildTransaction.lean) | Read a supplied UTxO, create payment and change outputs, and assemble an unsigned transaction with explicit fee and validity. |
+| [AttachKeyWitnesses.lean](Examples/AttachKeyWitnesses.lean) | Verify externally supplied key signatures and merge them while preserving the transaction body and other payloads. |
 | [BuildMetadataTransaction.lean](Examples/BuildMetadataTransaction.lean) | Build labeled metadata, commit its native hash, and attach the exact payload to an unsigned transaction. |
 | [WithdrawRewards.lean](Examples/WithdrawRewards.lean) | Add a reward withdrawal to a supplied UTxO and return the combined value, less an explicit fee, in an unsigned transaction. |
 
-All are complete single-file programs. Construction examples produce unsigned
-transactions; signing and submission are not yet implemented.
+All are complete single-file programs. Build examples produce unsigned transactions;
+the witness example verifies and attaches supplied signatures. Wallet signing and
+submission are not yet implemented.
 
 ### Inspect an address
 
@@ -314,3 +317,33 @@ keeping absent fields distinct from present empty collections. Auxiliary scripts
 are payloads, not witnesses. `Transaction.auxiliaryData` inspects imported payloads;
 `AuxiliaryData.checkCommitment` returns evidence of equality with a supplied hash.
 These checks do not establish schema validity, script execution or ledger acceptance.
+
+### Externally supplied key witnesses
+
+Each external signer signs the exact transaction ID bytes. Construct a witness
+from its public key/signature or import a CBOR witness collection:
+
+```lean
+let witness ← VKeyWitness.create verificationKey signature
+let additions ← VKeyWitnessSet.ofList [witness]
+let witnessed ← transaction.addKeyWitnesses additions
+```
+
+`addKeyWitnesses` verifies existing and new signatures through cardano-c, rejects
+conflicting signatures, and runs the native merge. It checks the body, auxiliary
+data, declared validity and other native-serialized witness fields are unchanged.
+Adding an identical witness is idempotent. Key-witness CBOR framing can normalize.
+
+Run the complete file-based example with public synthetic fixtures:
+
+```sh
+lake exe attachKeyWitnesses Examples/transaction.cbor.hex \
+  Examples/key-witnesses.cbor.hex
+```
+
+The two signatures verify cryptographically, but this fixture spends a nonexistent
+input. Signature checks do not establish signer completeness, spending authority,
+script execution or ledger acceptance. `VKeyWitnessSet.checkMerge` supplies proved
+contents-preservation evidence for observed results; it does not prove the native
+Ed25519 implementation. Bootstrap/script/data/redeemer construction and wallet
+signing remain separate implementation work.

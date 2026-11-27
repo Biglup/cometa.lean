@@ -25,7 +25,7 @@ also available for Linux ARM64 and macOS; availability is not a tested-platform 
 Windows packaging has not been implemented.
 
 ```sh
-lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction withdrawRewards buildMetadataTransaction
+lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction withdrawRewards buildMetadataTransaction attachKeyWitnesses
 lake test
 lake lean Tests/Invariants.lean
 lake env leanchecker Cometa.Plan
@@ -36,11 +36,13 @@ lake env leanchecker Cometa.InputSet
 lake env leanchecker Cometa.Withdrawals
 lake env leanchecker Cometa.Metadata
 lake env leanchecker Cometa.AuxiliaryData
+lake env leanchecker Cometa.VKeyWitness
+lake env leanchecker Cometa.VKeyWitnessSet
 lake exe inspectTransaction Examples/transaction.cbor.hex
 python3 scripts/check-source.py
 python3 -m unittest discover -s Tests/Packaging -v
 python3 scripts/check-consumer.py
-clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h cbits/cometa_withdrawals.h cbits/cometa_auxiliary.h
+clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h cbits/cometa_withdrawals.h cbits/cometa_auxiliary.h cbits/cometa_key_witnesses.h
 ```
 
 Lake runs native preparation before compiling the adapter. It downloads cardano-c
@@ -361,3 +363,48 @@ integer endpoints, UTF-8 byte bounds/NULs, all Plutus versions, empty versus abs
 fields, malformed/truncated/trailing data, commitment rejection and exact imported
 body/payload assembly. Constructor privacy and the metadata uniqueness/commitment
 checker laws are checked separately from runtime native conformance.
+
+## Verification-key witness audit
+
+`cbits/cometa_key_witnesses.h` is a tracked Lake source input included after body
+and auxiliary helpers. Component families 17/18 bind `vkey_witness` and
+`vkey_witness_set`. The pinned audit covers those implementations, `witness_set.c`,
+`transaction.c` and native Ed25519 public-key/signature code. Constructors retain
+key/signature objects; getters acquire references. Native buffers are copied, and
+partial snapshots and references are released on each error path.
+
+`Cometa.Internal.Witness` externs take two borrowed byte arrays (verification/merge)
+or one borrowed array (extraction). Lean 4.36 erases the world argument; native
+verification returns an owned EIO result containing a boxed Bool. No key material
+other than public keys/signatures crosses these interfaces. Key hashing uses the
+actual native BLAKE2b-224 public-key operation.
+
+The native merge replaces signatures by public key. Lean rejects duplicates and
+conflicting input signatures, verifies all supplied/existing signatures against the
+exact body ID, and checks the actual returned contents with a proved union validator.
+The C adapter delegates merging to `cardano_transaction_apply_vkey_witnesses`.
+It snapshots native body/auxiliary encodings and all other witness fields before
+and after merging. To serialize the latter, it temporarily detaches only key
+witnesses from the call-local object, retaining and restoring an owned reference
+even on serialization failure. It never clears body, datum or auxiliary caches.
+
+The pinned key-set reader does not release a child returned by a failing witness
+reader. Malformed indefinite endings can trigger this after allocation. A preflight
+uses that same native witness reader and releases its out-pointer on every path;
+all full-transaction adapters also invoke this guard. Native parsing/serialization
+still performs every production codec operation. Valgrind tests include the nested
+failure as well as repeated successful native merges.
+
+`Tests/WitnessFixtures.lean` contains public-only data derived from the first two
+vectors in pinned `lib/tests/crypto/ed25519_vectors.h`. Python `cryptography` Ed25519
+signed independently computed `hashlib.blake2b(body, digest_size=32)` identifiers.
+Only public keys, signatures, synthetic bodies and public-key digests were saved;
+no seeds or production secrets are in the new files. The empty-message signature
+also matches the published vector. `Examples/key-witnesses.cbor.hex` signs the
+existing synthetic transaction fixture with both public test keys.
+
+The suite checks exact nonminimal-body preservation, wrong-body failures, duplicate
+and conflicting keys, both tag styles, historical/block frames and all remaining
+witness kinds together. These are offline Linux x86_64 conformance tests. The Lean
+length/uniqueness/merge-checker proofs describe checked values; signature correctness
+and ledger authorization are not claimed as kernel-proved facts.

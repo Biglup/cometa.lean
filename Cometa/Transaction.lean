@@ -15,6 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -/
 
+import Cometa.VKeyWitnessSet
 import Cometa.AuxiliaryData
 import Cometa.Address
 import Cometa.Lovelace
@@ -130,6 +131,49 @@ def auxiliaryData (transaction : Transaction) : EIO Error (Option AuxiliaryData)
   let bytes ← (Internal.transactionAuxiliary transaction.cbor).adapt (.native "Transaction.auxiliaryData")
   if bytes.isEmpty then return none
   return some (← AuxiliaryData.ofCbor bytes)
+
+/-- Inspect the optional native key-witness collection. Repeated public keys are
+rejected by the collection validator; signature validity is checked separately.
+The native snapshot can normalize witness framing; `toCbor` retains the original
+complete transaction bytes.
+-/
+def keyWitnesses (transaction : Transaction) : EIO Error (Option VKeyWitnessSet) := do
+  let bytes ← (Internal.transactionVkeys transaction.cbor).adapt (.native "Transaction.keyWitnesses")
+  if bytes.isEmpty then return none
+  return some (← VKeyWitnessSet.ofCbor bytes)
+
+/-- Verify existing and incoming key signatures against this body, then call the
+native transaction witness merge. Conflicting signatures for the same key fail;
+identical witnesses are idempotent. Validate the observed result's contents.
+
+Body bytes, auxiliary data, other native-serialized witness fields and declared
+validity must remain unchanged. Outer framing and key-witness encoding can
+normalize. Existing set tagging is retained; a new set uses `additions.tagged`.
+This does not establish signer completeness, script validity or spending authority.
+-/
+def addKeyWitnesses (transaction : Transaction) (additions : VKeyWitnessSet) : EIO Error Transaction := do
+  let before ← match ← transaction.keyWitnesses with
+    | some witnesses => pure witnesses
+    | none => VKeyWitnessSet.ofList []
+  for existing in before.witnesses do
+    for incoming in additions.witnesses do
+      if existing.verificationKey == incoming.verificationKey && existing.signature != incoming.signature then
+        throw (.invalidInput "Conflicting signatures for one verification key")
+  unless ← before.verifyTransaction transaction.identifier do
+    throw (.invalidInput "An existing key witness does not verify against this body")
+  unless ← additions.verifyTransaction transaction.identifier do
+    throw (.invalidInput "An added key witness does not verify against this body")
+  if additions.witnesses.isEmpty then return transaction
+
+  let bytes ← (Internal.transactionApplyVkeys transaction.cbor additions.toCbor)
+    |>.adapt (.native "Transaction.addKeyWitnesses")
+  let merged ← ofCbor bytes
+  unless merged.identifier == transaction.identifier do
+    throw (.invalidInput "Native witness merge changed the transaction ID")
+  let some observed ← merged.keyWitnesses
+    | throw (.invalidInput "Native witness merge omitted key witnesses")
+  let _ ← EIO.ofExcept (VKeyWitnessSet.checkMerge before additions observed)
+  return merged
 
 /-- Parse strict hexadecimal transaction CBOR. No prefix or whitespace is accepted. -/
 def ofHex (text : String) : EIO Error Transaction := do
