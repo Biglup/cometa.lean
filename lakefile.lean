@@ -85,7 +85,8 @@ lean_lib Cometa where
   precompileModules := true
 
 lean_lib TestSupport where
-  roots := #[`Tests.Transaction, `Tests.TransactionFixtures, `Tests.Output, `Tests.OutputFixtures]
+  roots := #[`Tests.Transaction, `Tests.TransactionFixtures, `Tests.Output, `Tests.OutputFixtures,
+    `Tests.Decoding]
 
 @[test_driver]
 lean_exe cometaTests where

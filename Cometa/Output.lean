@@ -115,6 +115,67 @@ def checkNativeEncoding (output : Output) :
   if agreement : bytes = output.toCbor then return ⟨bytes, agreement⟩
   else throw (.invalidInput "Native output encoding differs from the constructed encoding")
 
+-- DECODING -------------------------------------------------------------------
+
+private structure Parts where
+  address : Internal.Cbor.Term
+  value : Internal.Cbor.Term
+  datum : Option Internal.Cbor.Term := none
+  script : Option Internal.Cbor.Term := none
+
+private def outputParts : Internal.Cbor.Term → Except Error Parts
+  | .array [address, value] => return ⟨address, value, none, none⟩
+  | .array [address, value, digest] =>
+    return ⟨address, value, some (.array [.unsigned 0, digest]), none⟩
+  | .map fields => do
+    let mut address := none
+    let mut value := none
+    let mut datum := none
+    let mut script := none
+    let mut seen : List UInt64 := []
+    for (key, item) in fields do
+      let key ← key.asUnsigned
+      if seen.contains key then throw (.invalidInput "Duplicate output field")
+      seen := key :: seen
+      match key with
+      | 0 => address := some item
+      | 1 => value := some item
+      | 2 => datum := some item
+      | 3 => script := some item
+      | _ => throw (.invalidInput "Unknown output field")
+    let some destination := address | throw (.invalidInput "Missing output address")
+    let some amount := value | throw (.invalidInput "Missing output value")
+    return ⟨destination, amount, datum, script⟩
+  | _ => throw (.invalidInput "Expected an output array or map")
+
+private def decodeDatum : Internal.Cbor.Term → EIO Error Datum
+  | .array [.unsigned 0, digest] => do
+    let bytes ← EIO.ofExcept digest.asBytes
+    return .hash (← EIO.ofExcept (Hash.ofBytes bytes))
+  | .array [.unsigned 1, embedded] => do
+    let bytes ← EIO.ofExcept embedded.asEmbedded
+    return .inline (← EncodedPlutusData.ofCbor bytes)
+  | _ => throw (.invalidInput "Invalid output datum option")
+
+/-- Decode a legacy array or map output into checked fields. Re-encoding this
+semantic value produces a fresh map; use `EncodedOutput` to retain input bytes.
+Unknown fields, duplicate keys, malformed embeddings and invalid bounds fail.
+-/
+def ofCbor (bytes : ByteArray) : EIO Error Output := do
+  let parts ← EIO.ofExcept (Internal.Cbor.decode bytes >>= outputParts)
+  let addressBytes ← EIO.ofExcept parts.address.asBytes
+  let address ← Address.ofBytes addressBytes
+  let value ← EIO.ofExcept (Internal.outputValueFromTerm parts.value)
+  let datum ← match parts.datum with
+    | none => pure Datum.none
+    | some item => decodeDatum item
+  let reference : Option Script ← match parts.script with
+    | none => pure none
+    | some item => do
+      let embedded ← EIO.ofExcept item.asEmbedded
+      pure (some (← Script.ofCbor embedded))
+  EIO.ofExcept (create address value.val datum reference)
+
 -- THEOREMS -------------------------------------------------------------------
 
 /-- Every constructed output carries evidence for its value's quantity bounds. -/
@@ -125,4 +186,31 @@ theorem address_isPayment (output : Output) : output.address.isPayment = true :=
   output.paymentAddress
 
 end Output
+
+-- ENCODED OUTPUTS ------------------------------------------------------------
+
+/-- Validated output retaining its exact imported representation alongside fields. -/
+structure EncodedOutput where
+  private mk ::
+  private bytes : ByteArray
+  private contents : Output
+
+namespace EncodedOutput
+
+/-- Decode complete output fields while preserving legacy, indefinite, and
+nonminimal encodings. Validation is component validation, not ledger acceptance.
+-/
+def ofCbor (bytes : ByteArray) : EIO Error EncodedOutput := do
+  return ⟨bytes, ← Output.ofCbor bytes⟩
+
+/-- Encode a constructed output using the fresh map representation. -/
+def ofOutput (output : Output) : EncodedOutput := ⟨output.toCbor, output⟩
+
+/-- Inspect the validated semantic fields without changing the retained bytes. -/
+def toOutput (output : EncodedOutput) : Output := output.contents
+
+/-- Return the exact validated representation. -/
+def toCbor (output : EncodedOutput) : ByteArray := output.bytes
+
+end EncodedOutput
 end Cometa

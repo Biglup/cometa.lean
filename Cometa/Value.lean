@@ -17,6 +17,7 @@ limitations under the License.
 
 import Cometa.Asset
 import Cometa.Internal.Cbor
+import Cometa.Internal.CborDecoder
 
 /-! Finite signed asset bundles with arbitrary-precision arithmetic. Duplicate
 entries add and missing assets have quantity zero. Output/mint serialization
@@ -155,6 +156,62 @@ theorem checkOutput_sound (value : Value) (checked : CheckedOutput)
 
 /-- Every checked output carries a proof of the declared quantity bounds. -/
 theorem checkedOutput_valid (checked : CheckedOutput) : checked.val.ValidOutput := checked.property
+
+end Value
+
+namespace Internal
+
+-- COMPONENT DECODING ---------------------------------------------------------
+
+private def assetsFromTerm (term : Cbor.Term) : Except Error Value := do
+  let policies ← term.asMap
+  let mut seenPolicies : List PolicyId := []
+  let mut result := Value.zero
+  for (policyTerm, assetTerm) in policies do
+    let policy ← PolicyId.ofBytes (← policyTerm.asBytes)
+    if seenPolicies.contains policy then throw (.invalidInput "Duplicate policy in asset map")
+    seenPolicies := policy :: seenPolicies
+
+    let assets ← assetTerm.asMap
+    let mut seenNames : List AssetName := []
+    for (nameTerm, quantityTerm) in assets do
+      let name ← AssetName.ofBytes (← nameTerm.asBytes)
+      if seenNames.contains name then throw (.invalidInput "Duplicate name in asset map")
+      seenNames := name :: seenNames
+      let quantity ← quantityTerm.asSigned64
+      result := result + Value.singleton (.native policy name) quantity
+  return result
+
+/-- Decode an output value and check its nonnegative representation bounds.
+Duplicate policies/names are rejected rather than aggregated during import.
+-/
+def outputValueFromTerm (term : Cbor.Term) : Except Error Value.CheckedOutput := do
+  let value : Value ← match term with
+    | .unsigned coin => pure (Value.lovelace coin.toNat)
+    | .array [.unsigned coin, assets] => do
+      let bundle ← assetsFromTerm assets
+      pure (Value.lovelace coin.toNat + bundle)
+    | _ => throw (.invalidInput "Expected coin or a two-field output value")
+  value.checkOutput
+
+/-- Decode a signed mint/burn map without permitting an ada entry. -/
+def mintValueFromTerm (term : Cbor.Term) : Except Error Value := assetsFromTerm term
+
+end Internal
+
+namespace Value
+
+/-- Decode exactly one output value into checked semantic quantities. Original
+CBOR identity belongs to an enclosing encoded output, not the semantic bundle.
+-/
+def ofOutputCbor (bytes : ByteArray) : Except Error CheckedOutput := do
+  Internal.outputValueFromTerm (← Internal.Cbor.decode bytes)
+
+/-- Decode exactly one signed mint/burn map. Duplicate keys, malformed hashes/
+names, out-of-range quantities and trailing bytes are rejected.
+-/
+def ofMintCbor (bytes : ByteArray) : Except Error Value := do
+  Internal.mintValueFromTerm (← Internal.Cbor.decode bytes)
 
 end Value
 end Cometa

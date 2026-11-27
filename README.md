@@ -67,7 +67,7 @@ independent-consumer checks, memory checks, and API documentation generation.
 | --- | --- |
 | [InspectAddress.lean](Examples/InspectAddress.lean) | Parse a recipient and amount, then construct an ordered payment plan. |
 | [InspectTransaction.lean](Examples/InspectTransaction.lean) | Read transaction CBOR, calculate its ID, and inspect its fee, inputs, and output summaries. |
-| [BuildOutput.lean](Examples/BuildOutput.lean) | Construct a multi-asset output with inline data and a native reference script, then check its encoding through C. |
+| [BuildOutput.lean](Examples/BuildOutput.lean) | Construct a multi-asset output, check its encoding through C, and decode its assets, inline datum and reference script. |
 
 All are complete single-file programs. These offline examples do not build,
 sign, or submit transactions.
@@ -169,3 +169,32 @@ Licensed under [Apache-2.0](LICENSE).
 Release archives and the manual publication workflow are described in
 [Releasing](docs/releasing.md). Reservoir indexes the GitHub repository; there is
 no separate package upload to Reservoir.
+
+### Inspect complete output fields
+
+`Output.ofCbor` decodes legacy arrays and map outputs into checked addresses,
+asset quantities, datum forms, and reference scripts. Use `EncodedOutput` when
+the original representation must survive inspection:
+
+```lean
+def inspectOutput (bytes : ByteArray) : IO Unit := do
+  let encoded ← (EncodedOutput.ofCbor bytes).toIO (IO.userError ∘ toString)
+  let output := encoded.toOutput
+
+  IO.println s!"Recipient: {output.address}"
+  for (asset, quantity) in output.value.val.toList do
+    IO.println s!"{asset}: {quantity}"
+
+  if let some script := output.referenceScript then
+    IO.println s!"Reference script: {script.hash.toHex}"
+  IO.println s!"Original CBOR: {Hex.ofBytes encoded.toCbor}"
+```
+
+`encoded.toCbor` returns the exact imported bytes; `output.toCbor` produces a
+fresh map encoding. `Script.ofCbor` and `EncodedPlutusData.ofCbor` likewise retain
+imported bytes and their native-computed hashes while exposing `view` and
+`toData`. Pure semantic decoders are available through `Value.ofOutputCbor`,
+`Value.ofMintCbor`, `NativeScript.ofCbor`, and `PlutusData.ofCbor`.
+These checks validate component structure and representable bounds, not ledger
+acceptance. Native scripts include all seven pinned alternatives, including
+Dijkstra require-guard scripts; availability still depends on the target era.

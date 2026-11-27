@@ -50,14 +50,24 @@ private def buildOutput (addressText policyText nameText quantityText lovelaceTe
   let reference ← Script.ofNative (.all [.invalidBefore 100, .invalidAfter 200])
   EIO.ofExcept (Output.create address value (.inline datum) (some reference))
 
-/-- Show the result after exercising the actual native output codec. -/
+/-- Check the native codec, then inspect the complete decoded output. -/
 private def report (output : Output) : IO Unit := do
   let checked ← output.checkNativeEncoding.toIO (IO.userError ∘ toString)
 
-  IO.println s!"Recipient: {output.address}"
-  for (asset, quantity) in output.value.val.toList do
+  let imported ← (EncodedOutput.ofCbor checked.val).toIO (IO.userError ∘ toString)
+  let decoded := imported.toOutput
+
+  IO.println s!"Recipient: {decoded.address}"
+  for (asset, quantity) in decoded.value.val.toList do
     IO.println s!"{asset}: {quantity}"
-  IO.println s!"Output CBOR: {Hex.ofBytes checked.val}"
+  match decoded.datum with
+  | .none => IO.println "Datum: none"
+  | .hash digest => IO.println s!"Datum hash: {digest.toHex}"
+  | .inline data => IO.println s!"Inline datum: {Hex.ofBytes data.toCbor}"
+
+  if let some script := decoded.referenceScript then
+    IO.println s!"Reference script hash: {script.hash.toHex}"
+  IO.println s!"Output CBOR: {Hex.ofBytes imported.toCbor}"
 
 /-- Handle argument, construction, native-codec, and reporting errors once. -/
 def main (args : List String) : IO UInt32 := do

@@ -206,3 +206,19 @@ The ordinary caller workflow is parse address, validate amount and destination,
 construct a plan, inspect its payments. Proofs establish accounting and composition
 laws for that model only. Wallet unlocking, signing, providers, balancing, and
 submission are not yet implemented and are not represented by placeholder APIs.
+
+## Component decoding audit
+
+The pure component CBOR reader bounds recursion by input byte count and checks
+container lengths before traversal. It retains map order, duplicate entries and
+byte-string chunks for schema validation. Output and asset schemas reject duplicate
+keys; Plutus data maps retain their ordered pairs. Imported output, datum and
+script wrappers preserve original bytes separately from decoded fields.
+
+The pinned `cardano_script_from_cbor` leaves its outer array ending unread. The
+adapter explicitly consumes that ending before its complete-input check, allowing
+indefinite envelopes while rejecting trailing items. Native-script payload caches
+remain intact for hashing. Tests distinguish changes to the outer envelope from
+changes to the hashed payload, including an independent Python `hashlib.blake2b`
+224-bit vector (zero language byte followed by the nonminimal native payload).
+No foreign declaration or ownership convention changed in this slice.

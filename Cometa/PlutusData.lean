@@ -17,6 +17,7 @@ limitations under the License.
 
 import Cometa.Hash
 import Cometa.Internal.Cbor
+import Cometa.Internal.CborDecoder
 import Cometa.Internal.Output
 
 /-! Typed construction of every Plutus data form, with a separate preserved
@@ -46,6 +47,7 @@ structure EncodedPlutusData where
   private mk ::
   private cbor : ByteArray
   private digest : Hash 32
+  private contents : PlutusData
 
 namespace PlutusData
 
@@ -76,58 +78,71 @@ decreasing_by
        simp_all only [Prod.mk.sizeOf_spec]
        omega)
 
+private def bytesInteger (bytes : ByteArray) : Nat :=
+  bytes.data.foldl (fun value byte => value * 256 + byte.toNat) 0
+
+private def fromTerm : Internal.Cbor.Term → Except Error PlutusData
+  | .unsigned value => .ok (.integer value.toNat)
+  | .negative value => .ok (.integer (-Int.ofNat value.toNat - 1))
+  | term@(.bytes _) => do return .bytes (← term.asBytes (some 64))
+  | .array items => do return .list (← items.mapM fromTerm)
+  | .map entries => do
+    let pairs ← entries.mapM fun entry => do return (← fromTerm entry.1, ← fromTerm entry.2)
+    return .map pairs
+  | .tag number item => do
+    if number == 2 || number == 3 then
+      let magnitude := bytesInteger (← item.asBytes (some 64))
+      return .integer (if number == 2 then magnitude else -Int.ofNat magnitude - 1)
+    else if number == 102 then
+      let .array [.unsigned alternative, .array fields] := item
+        | throw (.invalidInput "Invalid general Plutus constructor")
+      return .constr alternative (← fields.mapM fromTerm)
+    else
+      let alternative ← if 121 ≤ number && number ≤ 127 then pure (number - 121)
+        else if 1280 ≤ number && number ≤ 1400 then pure (number - 1280 + 7)
+        else throw (.invalidInput "Unknown Plutus data tag")
+      let .array fields := item | throw (.invalidInput "Constructor fields must be an array")
+      return .constr alternative (← fields.mapM fromTerm)
+  | _ => .error (.invalidInput "Unsupported Plutus data item")
+termination_by term => sizeOf term
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | decreasing_tactic
+    | (rename_i membership
+       have smaller := List.sizeOf_lt_of_mem membership
+       cases entry
+       simp_all only [Prod.mk.sizeOf_spec]
+       omega)
+
+/-- Decode exactly one semantic datum, checking constructor arities, tags and
+64-byte leaves/chunks. Map order and duplicate keys are preserved. Re-encoding
+this semantic tree may change identity; use EncodedPlutusData for preservation.
+-/
+def ofCbor (bytes : ByteArray) : Except Error PlutusData := do
+  fromTerm (← Internal.Cbor.decode bytes)
+
 end PlutusData
 
 namespace EncodedPlutusData
-
-private def byteAt (bytes : ByteArray) (index : Nat) : Except Error UInt8 :=
-  match bytes[index]? with
-  | some byte => .ok byte
-  | none => .error (.invalidInput "Truncated Plutus data CBOR")
-
-/-- Check the ledger's byte-leaf/chunk bound before the native grammar parser.
-The scan skips byte payloads and encoded integer arguments; native parsing still
-checks container structure, constructor tags, and the complete datum grammar.
--/
-private def checkByteChunks (bytes : ByteArray) : Except Error Unit := do
-  let mut position := 0
-  for _ in [:bytes.size] do
-    if position == bytes.size then return ()
-    let first ← byteAt bytes position
-    position := position + 1
-    let major := first.toNat / 32
-    let additional := first.toNat % 32
-    let mut argument := additional
-
-    if 24 ≤ additional && additional ≤ 27 then
-      argument := 0
-      for _ in [:2 ^ (additional - 24)] do
-        let byte ← byteAt bytes position
-        position := position + 1
-        argument := argument * 256 + byte.toNat
-    else if 28 ≤ additional && additional < 31 then
-      throw (.invalidInput "Reserved CBOR argument in Plutus data")
-
-    if major == 2 && additional != 31 then
-      if argument > 64 then throw (.invalidInput "Plutus data byte chunks must not exceed 64 bytes")
-      if position + argument > bytes.size then throw (.invalidInput "Truncated Plutus data bytes")
-      position := position + argument
-  return ()
 
 /-- Validate exactly one native-supported datum and hash its exact bytes.
 Byte leaves/chunks, including bignum payloads, must be at most 64 bytes.
 This checks datum serialization, not a validator's application-specific schema.
 -/
 def ofCbor (bytes : ByteArray) : EIO Error EncodedPlutusData := do
-  EIO.ofExcept (checkByteChunks bytes)
+  let contents ← EIO.ofExcept (PlutusData.ofCbor bytes)
   let digest ← (Internal.datumHash bytes).adapt (.native "EncodedPlutusData.ofCbor")
-  return ⟨bytes, ← EIO.ofExcept (Hash.ofBytes digest)⟩
+  return ⟨bytes, ← EIO.ofExcept (Hash.ofBytes digest), contents⟩
 
 /-- Encode and validate typed data, assigning a fresh encoding identity. -/
 def ofData (data : PlutusData) : EIO Error EncodedPlutusData := ofCbor data.toCbor
 
 /-- Exact validated datum bytes. -/
 def toCbor (data : EncodedPlutusData) : ByteArray := data.cbor
+
+/-- Inspect the semantic tree without changing its original encoding or hash. -/
+def toData (data : EncodedPlutusData) : PlutusData := data.contents
 
 /-- Native-computed digest over the exact datum bytes, not a normalized encoding. -/
 def hash (data : EncodedPlutusData) : Hash 32 := data.digest

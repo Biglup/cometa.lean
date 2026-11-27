@@ -121,10 +121,12 @@ single-file example using that operation. Native datum/script hashes are checked
 against independent vectors; the coverage document maps each implemented family
 to its native/schema boundary and records open APIs and quantity-range limits.
 
-Semantic decoding of values, scripts, Plutus data and complete outputs remains
-part of stage 1. Next implement those component APIs before full transaction
-assembly. The evaluator, selector, provider, wallet and signing requirements remain
-unchanged; this slice does not close those stages or imply full parity.
+Semantic decoding of values, scripts, Plutus data and complete outputs is now
+implemented. `EncodedOutput` and imported scripts/datums retain exact original
+bytes alongside their semantic views. Duplicate output/asset map keys and unknown
+fields are rejected. Native alternative 6 (require guard) is included with typed
+key/script credentials; the initial 0–5 inventory was incomplete. VM operations,
+complete transaction assembly, and the extension adapters below remain open.
 
 Local Linux x86_64 checks pass: native/encoding tests, interpreter and constructor
 checks, kernel checking, packaging regressions, formatting/licenses, API docs,

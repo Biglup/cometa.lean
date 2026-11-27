@@ -65,6 +65,10 @@ example (output : Transaction.OutputSummary) (address : Address) : Transaction.O
 #guard_msgs in
 example (output : Output) (address : Address) : Output := { output with address := address }
 
+/-- error: Unknown constant `Cometa.EncodedOutput.mk` -/
+#guard_msgs in
+#check EncodedOutput.mk
+
 -- MODEL LAWS -----------------------------------------------------------------
 
 example (left right : Plan) :

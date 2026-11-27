@@ -18,6 +18,7 @@ limitations under the License.
 import Cometa
 import Tests.Transaction
 import Tests.Output
+import Tests.Decoding
 
 /-! Boundary and native integration checks. No credentials or network are used. -/
 
@@ -108,4 +109,5 @@ def main : IO Unit := do
   testPlans
   Tests.Transaction.run
   Tests.Output.run
+  Tests.Decoding.run
   IO.println "Cometa boundary and native integration tests passed"

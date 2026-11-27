@@ -1,0 +1,163 @@
+/-
+Copyright 2026 Biglup Labs
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+import Cometa
+import Tests.OutputFixtures
+import Tests.TransactionFixtures
+
+/-! Semantic decoding, exact encoding retention, and malformed-input boundaries. -/
+
+namespace Tests.Decoding
+
+open Cometa
+
+-- HELPERS --------------------------------------------------------------------
+
+private def check (condition : Bool) (message : String) : IO Unit :=
+  unless condition do throw (IO.userError message)
+
+private def require (result : Except Error α) : IO α :=
+  IO.ofExcept (result.mapError toString)
+
+private def native (action : EIO Error α) : IO α := action.toIO (IO.userError ∘ toString)
+
+private def hex (text : String) : IO ByteArray := require (Hex.toBytes text)
+
+private def reject (action : EIO Error α) : IO Unit := do
+  match ← action.toIO' with
+  | .error _ => pure ()
+  | .ok _ => throw (IO.userError "Malformed component accepted")
+
+-- TESTS ----------------------------------------------------------------------
+
+private def testCbor : IO Unit := do
+  for text in ["00", "1800", "9f00ff", "bf0001ff", "5f41004101ff", "f6"] do
+    let _ ← require (Internal.Cbor.decode (← hex text))
+  for text in ["", "ff", "1c", "f814", "9f", "81ff", "bf00ff", "5f5fffff",
+      "5f00ff", "410000", "9fffffffffffffffff", "5bffffffffffffffff", "a100"] do
+    reject (EIO.ofExcept (Internal.Cbor.decode (← hex text)))
+
+private def testValues : IO Unit := do
+  let policy ← require (PolicyId.ofBytes ⟨Array.replicate 28 0x11⟩)
+  let name ← require (AssetName.ofString "a")
+  let asset := AssetId.native policy name
+  let value := Value.lovelace 18446744073709551615 + Value.singleton asset 17
+  let encoded ← require value.toOutputCbor
+  let decoded ← require (Value.ofOutputCbor encoded)
+  check (decoded.val.quantity .ada == value.quantity .ada && decoded.val.quantity asset == 17)
+    "output value quantities"
+  let mint := Value.singleton asset (-9223372036854775808)
+  let restored ← require (Value.ofMintCbor (← require mint.toMintCbor))
+  check (restored.quantity asset == -9223372036854775808) "signed mint quantity"
+  let policyHex := "581c" ++ policy.toHex
+  for text in ["20", "8200a1" ++ policyHex ++ "a1416120",
+      "8200a1" ++ policyHex ++ "a2416101416102",
+      "8200a2" ++ policyHex ++ "a0" ++ policyHex ++ "a0",
+      "8200a1" ++ policyHex ++ "a141611b8000000000000000"] do
+    reject (EIO.ofExcept (Value.ofOutputCbor (← hex text)))
+
+private def testData : IO Unit := do
+  for (data, encoded, _) in OutputFixtures.datums do
+    let decoded ← require (PlutusData.ofCbor (← hex encoded))
+    check (decoded.toCbor == data.toCbor) "datum semantic round trip"
+  for text in ["1817", "9f1817ff", "bf01020103ff", "c249010000000000000000"] do
+    let bytes ← hex text
+    let encoded ← native (EncodedPlutusData.ofCbor bytes)
+    check (encoded.toCbor == bytes) "exact datum bytes"
+    let decoded ← require (PlutusData.ofCbor bytes)
+    check (encoded.toData.toCbor == decoded.toCbor) "datum semantic view"
+  for text in ["d80000", "d8668100", "d87900", "c201", "f6", "0100"] do
+    reject (EIO.ofExcept (PlutusData.ofCbor (← hex text)))
+
+private def testScripts : IO Unit := do
+  let hash ← require (Hash.ofBytes (size := 28) ⟨Array.replicate 28 0x22⟩)
+  for credential in [Credential.key hash, Credential.script hash] do
+    let restored ← require (Credential.ofCbor credential.toCbor)
+    check (restored == credential) "credential round trip"
+    let tree := NativeScript.requireGuard credential
+    let script ← native (Script.ofNative tree)
+    let imported ← native (Script.ofCbor script.toCbor)
+    check (script.hash == imported.hash) "guard hash round trip"
+    let decoded ← require (NativeScript.ofCbor tree.toCbor)
+    check (decoded.toCbor == tree.toCbor) "guard semantic round trip"
+
+  let canonical ← native (Script.ofNative (.signature hash))
+  let indefinite ← native (Script.ofCbor (← hex ("9f008200581c" ++ hash.toHex ++ "ff")))
+  check (indefinite.hash == canonical.hash) "outer envelope does not affect native hash"
+  let nonminimalBytes ← hex ("8200821800581c" ++ hash.toHex)
+  let nonminimal ← native (Script.ofCbor nonminimalBytes)
+  check (nonminimal.hash.toHex == "84995578371b4788583e176d7bb6da60d4af6d77cb0956393653d259")
+    "independent BLAKE2b-224 imported-payload vector"
+  check (nonminimal.hash != canonical.hash && nonminimal.toCbor == nonminimalBytes)
+    "native payload identity preserved"
+  match nonminimal.view with
+  | .native tree => check (tree.toCbor == (NativeScript.signature hash).toCbor) "native semantic view"
+  | _ => throw (IO.userError "Wrong script view")
+
+  for (version, _) in OutputFixtures.plutusHashes do
+    let canonical ← native (Script.ofPlutus version (← hex "deadbeef"))
+    let bytes := Internal.Cbor.concat [⟨#[0x9f]⟩, Internal.Cbor.unsigned version.tag,
+      ← hex "5f42dead42beefffff"]
+    let imported ← native (Script.ofCbor bytes)
+    check (imported.hash == canonical.hash && imported.toCbor == bytes) "Plutus chunked import"
+  for text in ["820540", "820140", "8200820700", "8200820600", "82018200", "8201410000"] do
+    reject (Script.ofCbor (← hex text))
+
+private def testOutputs : IO Unit := do
+  let bytes ← hex TransactionFixtures.richOutput
+  let encoded ← native (EncodedOutput.ofCbor bytes)
+  let output := encoded.toOutput
+  check (encoded.toCbor == bytes && output.toCbor == bytes) "rich output semantic round trip"
+  check (output.value.val.quantity .ada == 2000000) "decoded output coin"
+  match output.datum, output.referenceScript with
+  | .inline data, some script =>
+    check (data.toData.toCbor == (PlutusData.integer 42).toCbor) "inline datum decoded"
+    check (script.hash.toHex == OutputFixtures.nativeSignatureHash) "reference script decoded"
+  | _, _ => throw (IO.userError "Missing complete output fields")
+
+  let simple ← require (Cometa.Output.create output.address (Value.lovelace 23))
+  let address := Internal.Cbor.bytes output.address.toBytes
+  let legacy := Internal.Cbor.concat [⟨#[0x9f]⟩, address, ← hex "1817ff"]
+  let imported ← native (EncodedOutput.ofCbor legacy)
+  check (imported.toCbor == legacy && imported.toOutput.toCbor == simple.toCbor)
+    "legacy exact bytes and normalized fields"
+  let datumHash ← require (Hash.ofBytes (size := 32) ⟨Array.replicate 32 1⟩)
+  let withHash ← require (Cometa.Output.create output.address (Value.lovelace 23) (.hash datumHash))
+  let decoded ← native (Cometa.Output.ofCbor (← require withHash.toLegacyCbor))
+  check (decoded.toCbor == withHash.toCbor) "legacy datum hash"
+  let addressHex := Hex.ofBytes address
+  for text in ["a0", "a100" ++ addressHex,
+      "a300" ++ addressHex ++ "00170117", "a300" ++ addressHex ++ "01170400",
+      "a300" ++ addressHex ++ "01170282004100",
+      "a300" ++ addressHex ++ "0117034100", "83" ++ addressHex ++ "17f6"] do
+    reject (EncodedOutput.ofCbor (← hex text))
+  for size in [:bytes.size] do
+    reject (EncodedOutput.ofCbor (bytes.extract 0 size))
+  reject (EncodedOutput.ofCbor (bytes ++ ⟨#[0]⟩))
+  for _ in [:100] do
+    let imported ← native (EncodedOutput.ofCbor bytes)
+    check (imported.toOutput.toCbor == bytes) "repeated complete output import"
+
+/-- Run semantic and exact-encoding decoding checks. -/
+def run : IO Unit := do
+  testCbor
+  testValues
+  testData
+  testScripts
+  testOutputs
+
+end Tests.Decoding
