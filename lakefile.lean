@@ -1,0 +1,80 @@
+/-
+Copyright 2026 Biglup Labs
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-/
+
+import Lake
+
+open System Lake DSL
+
+-- PACKAGE --------------------------------------------------------------------
+
+package cometa where
+  version := v!"0.1.0"
+  description := "Cardano addresses and payment plans for Lean"
+  license := "Apache-2.0"
+  moreLeanArgs := #["-DwarningAsError=true", "-Dlinter.missingDocs=true"]
+
+-- NATIVE LIBRARY --------------------------------------------------------------
+
+input_file nativeLibraryFile where
+  path := ".lake" / "native" / "lib" / nameToSharedLib "cardano-c"
+
+input_file bridgeSource where
+  path := "cbits" / "cometa_lean.c"
+  text := true
+
+target nativeLibrary _pkg : Dynlib := do
+  let file ← nativeLibraryFile.fetch
+  file.mapM fun path => do
+    return { name := "cardano-c", path := path }
+
+target bridgeObject pkg : FilePath := do
+  let source ← bridgeSource.fetch
+  let native ← nativeLibraryFile.fetch
+  let flags := #["-I", (← getLeanIncludeDir).toString,
+    "-I", (pkg.dir / ".lake" / "native" / "include").toString]
+  buildO (pkg.buildDir / "c" / "cometa_lean.o") source flags
+    #["-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror"] "cc" do
+      addTrace (← getLeanTrace)
+      let _ ← native.await
+      addTrace native.getTrace
+      return (← getTrace)
+
+target bridgeLibrary pkg : Dynlib := do
+  let object ← bridgeObject.fetch
+  let native ← nativeLibrary.fetch
+  let nativeDir ← IO.FS.realPath (pkg.dir / ".lake" / "native" / "lib")
+  let library ← buildLeanSharedLib "cometa_lean" (pkg.sharedLibDir / nameToSharedLib "cometa_lean")
+    #[object] #[native] #[] #[s!"-Wl,-rpath,{nativeDir}"]
+    (linkDeps := true)
+  -- The bridge links cardano-c itself. Consumers need that library at runtime,
+  -- not as a direct link input against Lean's older Linux glibc sysroot.
+  library.mapM fun result =>
+    pure { result with deps := #[], runtimeOnlyDeps := result.deps }
+
+-- LEAN TARGETS ---------------------------------------------------------------
+
+@[default_target]
+lean_lib Cometa where
+  moreLinkLibs := #[bridgeLibrary]
+  precompileModules := true
+
+@[test_driver]
+lean_exe cometaTests where
+  root := `Tests.Main
+
+lean_exe inspectAddress where
+  root := `Examples.InspectAddress

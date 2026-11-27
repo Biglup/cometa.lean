@@ -1,0 +1,87 @@
+# Copyright 2026 Biglup Labs
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+Language: Cpp
+BasedOnStyle: Microsoft
+AlwaysBreakAfterReturnType: AllDefinitions
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel:        true
+  AfterClass:            true
+  AfterControlStatement: Always
+  AfterEnum:             true
+  AfterFunction:         true
+  AfterNamespace:        true
+  AfterObjCDeclaration:  true
+  AfterStruct:           true
+  AfterUnion:            true
+  AfterExternBlock:      false
+  BeforeCatch:           true
+  BeforeElse:            true
+  BeforeLambdaBody:      true
+  BeforeWhile:           true
+  IndentBraces:          false
+  SplitEmptyFunction:    true
+  SplitEmptyRecord:      true
+  SplitEmptyNamespace:   true
+BreakStringLiterals: false
+BreakConstructorInitializers: BeforeComma
+BreakInheritanceList: BeforeComma
+BreakBeforeBinaryOperators: None
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
+PackConstructorInitializers: Never
+PenaltyReturnTypeOnItsOwnLine: 0
+PenaltyBreakBeforeFirstCallParameter: 1000
+PenaltyBreakAssignment: 1000
+PenaltyBreakComment: 1000
+PenaltyBreakFirstLessLess: 1000
+PenaltyIndentedWhitespace: 1000
+ColumnLimit: 0
+TabWidth: 2
+IndentWidth: 2
+ContinuationIndentWidth: 2
+IndentCaseLabels: true
+IndentExternBlock: AfterExternBlock
+IndentPPDirectives: None
+IndentAccessModifiers: true
+AccessModifierOffset: 0
+ConstructorInitializerIndentWidth: 0
+EmptyLineAfterAccessModifier: Always
+KeepEmptyLinesAtTheStartOfBlocks: false
+SeparateDefinitionBlocks: Always
+SpaceAfterTemplateKeyword: false
+SpaceBeforeCpp11BracedList: true
+SpaceBeforeRangeBasedForLoopColon: false
+AlignEscapedNewlines: Left
+AlignAfterOpenBracket: AlwaysBreak
+AlignConsecutiveAssignments:
+  Enabled: true
+  AlignCompound: true
+AlignConsecutiveBitFields:
+  Enabled: true
+AlignConsecutiveDeclarations:
+  Enabled: true
+AlignConsecutiveMacros:
+  Enabled: true
+PointerAlignment: Left
+ReferenceAlignment: Left
+QualifierAlignment: Left
+AlignOperands: DontAlign
+ShortNamespaceLines: 0
+Cpp11BracedListStyle: false
+SortIncludes: CaseInsensitive
