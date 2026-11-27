@@ -38,7 +38,11 @@ jobs:
           build: false
           test: false
       - name: Install check tools
-        run: sudo apt-get update && sudo apt-get install -y clang-format-18 valgrind
+        run: |
+          # These tools use Ubuntu packages; ignore the runner's unrelated vendor feed.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources
+          sudo apt-get update
+          sudo apt-get install -y clang-format-18 valgrind
       - name: Check source and release tooling
         run: |
           python3 scripts/check-source.py
