@@ -17,36 +17,56 @@
 
 # IMPORTS ---------------------------------------------------------------------
 
+import html
 import os
+import re
 import subprocess
-from urllib.parse import urlsplit
 from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
 
 # DEFINITIONS -----------------------------------------------------------------
 
+PUBLIC = "https://github.com/Biglup/cometa.lean/blob/"
+SOURCE_LINK = re.compile(r'(<a href=")([^"]+)(">source</a>)')
+
+
+def rewrite_sources(document: str, root: Path, revision: str) -> str:
+    """Make generated Cometa source anchors portable, including cached pages."""
+    def replace(match: re.Match) -> str:
+        url = html.unescape(match[2])
+        parsed = urlsplit(url)
+        if parsed.scheme == "file":
+            path = Path(unquote(parsed.path)).resolve().relative_to(root.resolve())
+        elif url.startswith(PUBLIC):
+            path = Path(unquote(parsed.path.split("/blob/", 1)[1].split("/", 1)[1]))
+        else:
+            return match[0]
+        if path != Path("Cometa.lean") and not (
+                path.parts[0] == "Cometa" and path.suffix == ".lean"
+                and ".." not in path.parts):
+            raise ValueError("Unexpected local documentation source path")
+        fragment = f"#{parsed.fragment}" if parsed.fragment else ""
+        target = PUBLIC + revision + "/" + quote(path.as_posix()) + fragment
+        return match[1] + html.escape(target, quote=True) + match[3]
+
+    return SOURCE_LINK.sub(replace, document)
+
 
 def main() -> None:
-    """Override Git configuration only for the documentation subprocess tree."""
+    """Generate without consulting Git remotes, then attach public source URLs."""
     root = Path(__file__).resolve().parents[1]
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise SystemExit("Invalid source revision")
     environment = os.environ.copy()
-    # Do not inherit authenticated URL rewrites from a developer's Git config.
-    for key in list(environment):
-        if key.startswith("GIT_CONFIG_") or key == "GIT_CONFIG":
-            del environment[key]
-    environment.update({
-        "DOCGEN_SRC": "github",
-        "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": "remote.origin.url",
-        "GIT_CONFIG_VALUE_0": "https://github.com/Biglup/cometa.lean",
-    })
-    remote = subprocess.check_output(
-        ["git", "remote", "get-url", "origin"], cwd=root, env=environment, text=True)
-    if urlsplit(remote.strip()).username is not None:
-        raise SystemExit("Refusing documentation generation with an authenticated Git URL")
+    environment["DOCGEN_SRC"] = "file"
     subprocess.run(["lake", "build", "Cometa:docs"], cwd=root / "docbuild",
                    env=environment, check=True)
+    directory = root / "docbuild/.lake/build/doc"
+    for page in [directory / "Cometa.html", *(directory / "Cometa").rglob("*.html")]:
+        document = page.read_text()
+        page.write_text(rewrite_sources(document, root, revision))
 
 
 if __name__ == "__main__":

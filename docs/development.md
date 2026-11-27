@@ -78,9 +78,9 @@ python3 scripts/build-docs.py
 python3 -m http.server --directory docbuild/.lake/build/doc 8000
 ```
 
-The helper uses an explicit public repository URL and disables inherited Git
-configuration in its subprocesses, without editing the user's configuration.
-This avoids copying authenticated remotes into generated documentation. Release
+The helper generates local source links, then rewrites Cometa source anchors to
+the public repository at the current commit. It never asks Git for remote URLs
+or edits the user's Git configuration. Release
 packaging rejects credential patterns and local source links. Only committed code
 has valid GitHub source links; no hosted documentation deployment is claimed.
 

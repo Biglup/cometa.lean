@@ -47,6 +47,26 @@ release = load("cometa_release", ROOT / "scripts/release.py")
 native = load("cometa_native", ROOT / "scripts/setup-native.py")
 
 
+docs = load("cometa_docs", ROOT / "scripts/build-docs.py")
+
+
+class DocumentationTests(unittest.TestCase):
+    def test_local_source_is_pinned_to_public_commit(self):
+        source = f'<a href="{ROOT.as_uri()}/Cometa/Address.lean#L42">source</a>'
+        result = docs.rewrite_sources(source, ROOT, "a" * 40)
+        self.assertEqual(result, '<a href="' + docs.PUBLIC + "a" * 40
+                         + '/Cometa/Address.lean#L42">source</a>')
+
+    def test_cached_source_gets_current_commit(self):
+        source = '<a href="' + docs.PUBLIC + 'old/Cometa.lean">source</a>'
+        self.assertIn("new/Cometa.lean", docs.rewrite_sources(source, ROOT, "new"))
+
+    def test_sources_outside_package_are_rejected(self):
+        for path in ["/tmp/Other.lean", str(ROOT / ".lake/Other.lean")]:
+            with self.assertRaises(ValueError):
+                docs.rewrite_sources(f'<a href="file://{path}">source</a>', ROOT, "new")
+
+
 class ReleaseTests(unittest.TestCase):
     """Use disposable Git repositories; these fixture commits are never pushed."""
 
