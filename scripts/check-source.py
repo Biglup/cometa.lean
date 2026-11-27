@@ -27,7 +27,7 @@ def main() -> None:
     """Inspect authored files, excluding Git metadata and generated Lake artifacts."""
     root = Path(__file__).resolve().parents[1]
     failures: list[str] = []
-    excluded = {".git", ".lake", "__pycache__", "assets"}
+    excluded = {".git", ".lake", ".release", "__pycache__", "assets"}
     for path in root.rglob("*"):
         relative = path.relative_to(root)
         if not path.is_file() or excluded.intersection(relative.parts):

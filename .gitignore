@@ -16,3 +16,4 @@
 .lake/
 docbuild/.lake/
 __pycache__/
+.release/
