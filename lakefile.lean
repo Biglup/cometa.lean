@@ -29,8 +29,20 @@ package cometa where
 
 -- NATIVE LIBRARY --------------------------------------------------------------
 
-input_file nativeLibraryFile where
-  path := ".lake" / "native" / "lib" / nameToSharedLib "cardano-c"
+input_file nativeSetup where
+  path := "scripts" / "setup-native.py"
+  text := true
+
+/-- Prepare the pinned native dependency on demand, including downstream builds. -/
+target nativeLibraryFile pkg : FilePath := do
+  let setup ← nativeSetup.fetch
+  setup.mapM fun setupFile => do
+    proc { cmd := "python3", args := #[setupFile.toString, "--ensure"] }
+    let directory := pkg.dir / ".lake" / "native"
+    let library := directory / "lib" / nameToSharedLib "cardano-c"
+    addTrace (← computeTrace library)
+    addTrace (← computeTrace (TextFilePath.mk (directory / "install.json")))
+    return library
 
 input_file bridgeSource where
   path := "cbits" / "cometa_lean.c"
@@ -56,7 +68,7 @@ target bridgeObject pkg : FilePath := do
 target bridgeLibrary pkg : Dynlib := do
   let object ← bridgeObject.fetch
   let native ← nativeLibrary.fetch
-  let nativeDir ← IO.FS.realPath (pkg.dir / ".lake" / "native" / "lib")
+  let nativeDir := (← IO.FS.realPath pkg.dir) / ".lake" / "native" / "lib"
   let library ← buildLeanSharedLib "cometa_lean" (pkg.sharedLibDir / nameToSharedLib "cometa_lean")
     #[object] #[native] #[] #[s!"-Wl,-rpath,{nativeDir}"]
     (linkDeps := true)

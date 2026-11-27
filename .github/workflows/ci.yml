@@ -17,7 +17,9 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -27,6 +29,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: leanprover/lean-action@v1
         with:
           auto-config: false
@@ -34,26 +38,40 @@ jobs:
           build: false
           test: false
       - name: Install check tools
-        run: sudo apt-get update && sudo apt-get install -y clang-format-18 valgrind
-      - name: Prepare pinned native library
-        run: python3 scripts/setup-native.py
-      - name: Check source conventions
+        run: |
+          # These tools use Ubuntu packages; ignore the runner's unrelated vendor feed.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources
+          sudo apt-get update
+          sudo apt-get install -y clang-format-18 valgrind
+      - name: Check source and release tooling
         run: |
           python3 scripts/check-source.py
+          python3 -m unittest discover -s Tests/Packaging -v
           clang-format-18 --dry-run --Werror cbits/cometa_lean.c
-      - name: Build and test
+      - name: Build and test with automatic native setup
         run: |
           lake build cometaTests inspectAddress
           lake test
           lake lean Tests/Invariants.lean
           lake env leanchecker Cometa.Plan
-          python3 scripts/check-consumer.py
       - name: Check native memory ownership
         run: >-
           lake env valgrind --leak-check=full --errors-for-leak-kinds=definite
           --error-exitcode=99 .lake/build/bin/cometaTests
-      - name: Build API reference
-        working-directory: docbuild
-        env:
-          DOCGEN_SRC: file
-        run: lake build Cometa:docs
+      - name: Build API reference with public source links
+        run: python3 scripts/build-docs.py
+      - name: Prepare and verify release archives
+        run: |
+          python3 scripts/release.py prepare
+          python3 scripts/release.py verify
+      - name: Test the source archive as an independent dependency
+        shell: bash
+        run: |
+          source_archive=$(python3 -c 'import json; m=json.load(open(".release/manifest.json")); print(".release/cometa-" + m["version"] + ".tar.gz")')
+          python3 scripts/check-consumer.py --archive "$source_archive"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: .release/
+          include-hidden-files: true
+          if-no-files-found: error

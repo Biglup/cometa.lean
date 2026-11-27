@@ -25,20 +25,30 @@ also available for Linux ARM64 and macOS; availability is not a tested-platform 
 Windows packaging has not been implemented.
 
 ```sh
-python3 scripts/setup-native.py
 lake build cometaTests inspectAddress
 lake test
 lake lean Tests/Invariants.lean
 lake env leanchecker Cometa.Plan
 python3 scripts/check-source.py
+python3 -m unittest discover -s Tests/Packaging -v
 python3 scripts/check-consumer.py
 clang-format-18 --dry-run --Werror cbits/cometa_lean.c
 ```
 
-The setup script downloads cardano-c **2.0.0-rc.7**, verifies its SHA256, and installs
-it under `.lake/native`. For an offline build, pass `--archive /path/to/archive`.
-`lake clean` may remove prepared artifacts; rerun setup when needed. No native
-files or toolchain binaries belong in Git.
+Lake runs native preparation before compiling the adapter. It downloads cardano-c
+**2.0.0-rc.7**, verifies the archive SHA256, and checks the cached library and headers
+on later builds. Concurrent builds serialize installation through a package-local
+lock; a failed download or verification leaves the previous installation intact.
+
+For offline builds, set `COMETA_NATIVE_ARCHIVE=/path/to/platform-archive.tar.gz`.
+The same checksum verification applies. `lake clean` is safe: the next build
+prepares missing native files automatically. No native files or toolchain binaries
+belong in Git. The Python setup command remains available for explicit preparation.
+
+The consumer check copies source into a fresh directory, excluding all caches.
+Pass `--archive .release/cometa-VERSION.tar.gz` to test an actual release archive.
+It never runs native setup itself; successful compilation must establish that
+Lake resolved the native build dependency.
 
 Run executables with `lake exe` (or `lake env`), which supplies the shared-library
 search paths. The adapter links cardano-c directly; consumers load that dependency
@@ -64,16 +74,15 @@ Public contracts live beside the code in Lean doc comments. Build the reference
 with the separately pinned doc-gen4 project so consumers do not depend on it:
 
 ```sh
-cd docbuild
-lake update
-DOCGEN_SRC=file lake build Cometa:docs
-python3 -m http.server --directory .lake/build/doc 8000
+python3 scripts/build-docs.py
+python3 -m http.server --directory docbuild/.lake/build/doc 8000
 ```
 
-The generated reference is local; no hosted documentation deployment is claimed.
-Use local source links during development. The generator's default GitHub mode
-reads Git remote URLs, which may contain authentication information. Only use
-GitHub source links in a publishing environment with credential-free remote URLs.
+The helper generates local source links, then rewrites Cometa source anchors to
+the public repository at the current commit. It never asks Git for remote URLs
+or edits the user's Git configuration. Release
+packaging rejects credential patterns and local source links. Only committed code
+has valid GitHub source links; no hosted documentation deployment is claimed.
 
 ## Native boundary and provenance
 

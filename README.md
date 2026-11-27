@@ -48,12 +48,13 @@ Install the pinned Lean toolchain with Elan, Python 3.12+, and a C11 compiler.
 Linux x86_64 requires glibc 2.33 or newer.
 
 ```sh
-python3 scripts/setup-native.py
 lake build
 lake test
 ```
 
-Native downloads are version-pinned and SHA256-checked. See the
+Lake prepares the native dependency automatically, including when Cometa is used
+from another package. Downloads are version-pinned and SHA256-checked; subsequent
+builds verify and reuse the local installation. See the
 [development guide](docs/development.md) for offline setup, platform scope,
 independent-consumer checks, memory checks, and API documentation generation.
 
@@ -86,3 +87,7 @@ separators, validation, FFI ownership, and proof boundaries. The
 the doc-gen4 reference locally.
 
 Licensed under [Apache-2.0](LICENSE).
+
+Release archives and the manual publication workflow are described in
+[Releasing](docs/releasing.md). Reservoir indexes the GitHub repository; there is
+no separate package upload to Reservoir.
