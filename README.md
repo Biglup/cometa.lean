@@ -128,7 +128,9 @@ the doc-gen4 reference locally.
 
 The [implementation plan](docs/implementation-plan.md) records this milestone
 and the path toward multi-asset outputs, encrypted wallets, providers, and a
-complete build/sign/submit workflow.
+complete build/sign/submit workflow. The [coverage contract](docs/api-coverage.md)
+requires full transaction-building parity, replaceable providers/evaluators/coin
+selectors, and direct access to native instances with explicit proof boundaries.
 
 Licensed under [Apache-2.0](LICENSE).
 
