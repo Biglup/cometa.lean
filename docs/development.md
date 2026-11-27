@@ -25,7 +25,7 @@ also available for Linux ARM64 and macOS; availability is not a tested-platform 
 Windows packaging has not been implemented.
 
 ```sh
-lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction
+lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction withdrawRewards
 lake test
 lake lean Tests/Invariants.lean
 lake env leanchecker Cometa.Plan
@@ -33,11 +33,12 @@ lake env leanchecker Cometa.TransactionId
 lake env leanchecker Cometa.Value
 lake env leanchecker Cometa.Output
 lake env leanchecker Cometa.InputSet
+lake env leanchecker Cometa.Withdrawals
 lake exe inspectTransaction Examples/transaction.cbor.hex
 python3 scripts/check-source.py
 python3 -m unittest discover -s Tests/Packaging -v
 python3 scripts/check-consumer.py
-clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h
+clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h cbits/cometa_withdrawals.h
 ```
 
 Lake runs native preparation before compiling the adapter. It downloads cardano-c
@@ -272,7 +273,7 @@ The pinned C API represents required signers through key guards. The typed guard
 list binds the shared native getter/setter directly, including script credentials.
 Native guard serialization omits empty sets; the Lean constructor rejects an
 explicit empty request instead of losing presence silently. Native body getters
-for the ten unmodeled field families set `hasAdditionalFields`, preventing a
+for the remaining unmodeled field families set `hasAdditionalFields`, preventing a
 partial `view` from being offered through `toConfig` for reconstruction.
 
 Body parsing already rejects duplicate body keys. Nested output parsing can hit
@@ -284,3 +285,38 @@ outputs, ordinary body outputs and collateral returns. Field codecs remain nativ
 `checkDisjoint_sound` concerns two observed input sets, not native algorithm
 correctness or an era-specific spending/reference/collateral policy. No network,
 minimum-fee, balancing, script-execution or signature guarantee is inferred.
+
+## Reward-account and withdrawal audit
+
+`cbits/cometa_withdrawals.h` is a tracked Lake build input included before the
+body adapter. Component families 12 and 13 use the existing audited ABI; family 12
+carries raw address bytes rather than CBOR. The pinned audit covers
+`lib/src/address/{reward_address,address}.c`,
+`lib/src/address/internals/reward_addr_pack.c`, and
+`lib/src/common/withdrawal_map.c`. Reward constructors retain the credential;
+credential and indexed map getters acquire references. All getter buffers are
+copied and all references released, including partially populated error paths.
+
+The pinned reward unpacker accepts payment headers and ignores bytes after the
+credential. A narrow guard requires exactly 29 bytes, reward type 14/15, and
+network 0/1 before parsing. Withdrawal map keys receive the same guard through
+the native CBOR reader, including when nested in a body. Text parsing requires
+the native lowercase display form, preventing accepted text from silently losing
+trailing payload bytes. Uppercase Bech32 is rejected by this pinned native parser.
+These are validation guards; all construction, serialization and field decoding
+remain native. General `Address` parsing retains its existing native semantics.
+
+Native map insertion and parsing retain duplicate accounts. The adapter uses
+`get_key_value_at`, not key lookup, to preserve each observed amount before Lean
+checks uniqueness. Both zero and all UInt64 bits are retained. The aggregate is
+an unbounded Lean `Nat`; output construction separately checks native bounds.
+Imported map bytes are cached in Lean, while a new body uses the native map writer
+and can normalize them. An imported body retains its exact native cache for assembly.
+
+`Tests/Withdrawals.lean` uses synthetic repeated-byte credential hashes and literal
+CBOR vectors. Its body digest was independently computed using Python hashlib
+BLAKE2b-256. The malformed Bech32 payload was generated once with the pinned native
+Bech32 encoder from a 30-byte address; the account wrapper must reject it. The
+example reuses the public CIP-19 reward address and synthetic UTxO fixture.
+`Withdrawals.accounts_unique` describes only the checked native snapshot; it is
+not a proof of native algorithm correctness, account rewards, or authorization.

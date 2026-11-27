@@ -47,10 +47,10 @@ jobs:
         run: |
           python3 scripts/check-source.py
           python3 -m unittest discover -s Tests/Packaging -v
-          clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h
+          clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h cbits/cometa_withdrawals.h
       - name: Build and test with automatic native setup
         run: |
-          lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction
+          lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction withdrawRewards
           lake test
           lake lean Tests/Invariants.lean
           lake env leanchecker Cometa.Plan
@@ -58,6 +58,7 @@ jobs:
           lake env leanchecker Cometa.Value
           lake env leanchecker Cometa.Output
           lake env leanchecker Cometa.InputSet
+          lake env leanchecker Cometa.Withdrawals
           lake exe inspectTransaction Examples/transaction.cbor.hex
       - name: Check native memory ownership
         run: >-

@@ -81,6 +81,22 @@ example (output : Output) (address : Address) : Output := { output with address 
 #guard_msgs in
 #check UTxO.mk
 
+/-- error: Unknown constant `Cometa.RewardAccount.mk` -/
+#guard_msgs in
+#check RewardAccount.mk
+
+/-- error: Unknown constant `Cometa.Withdrawals.mk` -/
+#guard_msgs in
+#check Withdrawals.mk
+
+/-- error: invalid {...} notation, constructor for `RewardAccount` is marked as private -/
+#guard_msgs in
+example (account : RewardAccount) : RewardAccount := { account with network := .mainnet }
+
+/-- error: invalid {...} notation, constructor for `Withdrawals` is marked as private -/
+#guard_msgs in
+example (withdrawals : Withdrawals) : Withdrawals := { withdrawals with entries := [] }
+
 -- MODEL LAWS -----------------------------------------------------------------
 
 example (left right : Plan) :
@@ -137,3 +153,16 @@ example (left right : InputSet)
   let body ← TransactionBody.create { inputs, outputs := #[], fee }
   let transaction ← Transaction.ofBody body
   return transaction.id == body.id : EIO Error Bool).toIO (IO.userError ∘ toString)
+
+example (withdrawals : Withdrawals) :
+    (withdrawals.entries.map fun entry => entry.account.toBytes).Nodup :=
+  Withdrawals.accounts_unique withdrawals
+
+/-- info: true -/
+#guard_msgs in
+#eval (do
+  let hash ← EIO.ofExcept (Hash.ofBytes ⟨Array.replicate 28 0⟩)
+  let account ← RewardAccount.create .testnet (.script hash)
+  let zero ← EIO.ofExcept (Lovelace.ofNat 0)
+  let withdrawals ← Withdrawals.ofList [⟨account, zero⟩]
+  return withdrawals.entries.length == 1 : EIO Error Bool).toIO (IO.userError ∘ toString)

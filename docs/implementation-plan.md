@@ -167,11 +167,34 @@ independent body/hash vectors, absent/empty distinctions, native normalization,
 truncation/error paths, constructor privacy and native ownership. The clean
 consumer and source-archive consumer now run all four examples.
 
-Remaining typed body families are certificates, withdrawals, updates, voting,
+Remaining typed body families are certificates, updates, voting,
 proposals and contextual/subtransaction/account fields. They are retained in
 imported bytes but block `toConfig` reconstruction. Empty guards also block
 reconstruction because the pinned native writer omits them. Witness/auxiliary
 assembly and extension adapters remain required; this slice is not full parity.
+
+## Native reward-withdrawal slice
+
+Added native key/script reward-account construction and inspection, checked
+withdrawal-map construction/import, and typed transaction-body field 5. Reward
+bytes must retain their exact identity instead of relying on native normalization;
+map keys receive the same preflight validation before native parsing. Duplicate
+accounts are rejected with a proof-bearing snapshot. Zero amounts, maximum
+unsigned amounts, and absent versus empty body fields are preserved.
+
+`WithdrawRewards.lean` is a complete offline assembly example with a supplied
+UTxO, reward amount, fee and validity slot. It preserves input assets and creates
+an output for the combined value less the fee. Tests cover native getters, malformed
+and duplicate keys, nonminimal imports, exact body assembly, independent body/hash
+vectors, and repeated success/error ownership. The consumer now runs five examples.
+Local Linux x86_64 tests, interpreter/privacy checks, kernel checking, formatting,
+licenses, packaging regressions, API docs and all five clean-consumer examples
+pass. Valgrind reports zero errors and no definitely or indirectly lost bytes.
+The consumer used the checksum-verified offline native archive.
+
+Certificates, governance, updates, contextual fields, witnesses, auxiliary data,
+and the extension adapters remain required. Rewards querying and authorization
+are not implemented by this slice.
 
 ## Remaining implementation sequence
 

@@ -1162,6 +1162,9 @@ cleanup:
   return code;
 }
 
+#include "cometa_withdrawals.h"
+
+/* Body construction depends on the withdrawal helpers above. */
 #include "cometa_transaction_build.h"
 
 /* FOREIGN ENTRY POINTS ******************************************************/
@@ -1175,6 +1178,24 @@ cometa_lean_component_encode(uint8_t family, b_lean_obj_arg fields)
   lean_object*    bytes = NULL;
   switch (family)
   {
+    case 12:
+    {
+      cardano_reward_address_t* value = NULL;
+      code                            = build_reward(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        bytes = copy_bytes(cardano_reward_address_get_bytes(value), cardano_reward_address_get_bytes_size(value));
+      cardano_reward_address_unref(&value);
+      break;
+    }
+    case 13:
+    {
+      cardano_withdrawal_map_t* value = NULL;
+      code                            = build_withdrawals(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_withdrawals(value, &bytes);
+      cardano_withdrawal_map_unref(&value);
+      break;
+    }
     case 8:
     {
       cardano_transaction_input_t* value = NULL;
@@ -1297,6 +1318,24 @@ cometa_lean_component_decode(uint8_t family, b_lean_obj_arg bytes)
   lean_object*    fields = NULL;
   switch (family)
   {
+    case 12:
+    {
+      cardano_reward_address_t* value = NULL;
+      code                            = parse_reward(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_reward(value, &fields);
+      cardano_reward_address_unref(&value);
+      break;
+    }
+    case 13:
+    {
+      cardano_withdrawal_map_t* value = NULL;
+      code                            = parse_withdrawals(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_withdrawals(value, &fields);
+      cardano_withdrawal_map_unref(&value);
+      break;
+    }
     case 8:
     {
       cardano_transaction_input_t* value = NULL;

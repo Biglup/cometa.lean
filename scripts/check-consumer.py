@@ -48,13 +48,15 @@ def verify(source: Path, consumer: Path) -> None:
     shutil.copyfile(source / "Examples/InspectTransaction.lean", consumer / "TransactionMain.lean")
     shutil.copyfile(source / "Examples/BuildOutput.lean", consumer / "OutputMain.lean")
     shutil.copyfile(source / "Examples/BuildTransaction.lean", consumer / "BuildTransactionMain.lean")
+    shutil.copyfile(source / "Examples/WithdrawRewards.lean", consumer / "WithdrawRewardsMain.lean")
     (consumer / "lakefile.lean").write_text(
         "import Lake\nopen Lake DSL\npackage consumer\n"
         f"require cometa from {json.dumps(str(source))}\n"
         "lean_exe inspect where\n  root := `Main\n"
         "lean_exe inspectTransaction where\n  root := `TransactionMain\n"
         "lean_exe buildOutput where\n  root := `OutputMain\n"
-        "lean_exe buildTransaction where\n  root := `BuildTransactionMain\n", encoding="utf-8")
+        "lean_exe buildTransaction where\n  root := `BuildTransactionMain\n"
+        "lean_exe withdrawRewards where\n  root := `WithdrawRewardsMain\n", encoding="utf-8")
     address = "addr_test1vz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzerspjrlsz"
     subprocess.run(["lake", "exe", "inspect", address, "2000000"], cwd=consumer, check=True)
     subprocess.run(["lake", "exe", "inspectTransaction",
@@ -63,6 +65,9 @@ def verify(source: Path, consumer: Path) -> None:
                    cwd=consumer, check=True)
     subprocess.run(["lake", "exe", "buildTransaction", str(source / "Examples/utxo.cbor.hex"),
                     address, "2000000", "170000", "100000000"], cwd=consumer, check=True)
+    reward = "stake_test1uqehkck0lajq8gr28t9uxnuvgcqrc6070x3k9r8048z8y5gssrtvn"
+    subprocess.run(["lake", "exe", "withdrawRewards", str(source / "Examples/utxo.cbor.hex"),
+                    reward, "2000000", "170000", "100000000"], cwd=consumer, check=True)
     print("Clean-source downstream consumer passed (automatic native setup)")
 
 
