@@ -198,6 +198,8 @@ check_body_outputs(lean_object* bytes)
       }
       TRY(cardano_cbor_reader_read_end_array(reader));
     }
+    else if (key == 5)
+      TRY(check_withdrawal_keys(reader));
     else if (key == 16)
       TRY(check_encoded_output(reader));
     else
@@ -338,14 +340,15 @@ body_field(lean_object* fields, uint64_t kind)
 static cardano_error_t
 build_body(lean_object* fields, cardano_transaction_body_t** result)
 {
-  cardano_transaction_body_t*        body       = NULL;
-  cardano_transaction_input_set_t*   inputs     = NULL;
-  cardano_transaction_output_list_t* outputs    = NULL;
-  cardano_transaction_output_t*      output     = NULL;
-  cardano_multi_asset_t*             mint       = NULL;
-  cardano_blake2b_hash_t*            hash       = NULL;
-  cardano_guard_set_t*               guards     = NULL;
-  cardano_credential_t*              credential = NULL;
+  cardano_transaction_body_t*        body        = NULL;
+  cardano_transaction_input_set_t*   inputs      = NULL;
+  cardano_transaction_output_list_t* outputs     = NULL;
+  cardano_transaction_output_t*      output      = NULL;
+  cardano_withdrawal_map_t*          withdrawals = NULL;
+  cardano_multi_asset_t*             mint        = NULL;
+  cardano_blake2b_hash_t*            hash        = NULL;
+  cardano_guard_set_t*               guards      = NULL;
+  cardano_credential_t*              credential  = NULL;
   cardano_error_t                    code;
   lean_object*                       input_field  = body_field(fields, 0);
   lean_object*                       output_field = body_field(fields, 1);
@@ -372,6 +375,12 @@ build_body(lean_object* fields, cardano_transaction_body_t** result)
     {
       case 0:
       case 1:
+        break;
+      case 5:
+        TRY(parse_withdrawals(bytes, &withdrawals));
+        TRY(cardano_transaction_body_set_withdrawals(body, withdrawals));
+        cardano_withdrawal_map_unref(&withdrawals);
+        withdrawals = NULL;
         break;
       case 3:
         TRY(cardano_transaction_body_set_invalid_after(body, &number));
@@ -461,6 +470,7 @@ cleanup:
   cardano_transaction_input_set_unref(&inputs);
   cardano_transaction_output_list_unref(&outputs);
   cardano_transaction_output_unref(&output);
+  cardano_withdrawal_map_unref(&withdrawals);
   cardano_multi_asset_unref(&mint);
   cardano_blake2b_hash_unref(&hash);
   cardano_guard_set_unref(&guards);
@@ -473,18 +483,19 @@ cleanup:
 static cardano_error_t
 read_body(cardano_transaction_body_t* body, lean_object** result)
 {
-  cardano_error_t                    code       = CARDANO_SUCCESS;
-  cardano_transaction_input_set_t*   inputs     = NULL;
-  cardano_transaction_output_list_t* outputs    = NULL;
-  cardano_transaction_output_t*      output     = NULL;
-  cardano_multi_asset_t*             mint       = NULL;
-  cardano_blake2b_hash_t*            hash       = NULL;
-  cardano_guard_set_t*               guards     = NULL;
-  cardano_credential_t*              credential = NULL;
-  lean_object*                       children   = lean_box(0);
-  lean_object*                       entries    = lean_box(0);
-  lean_object*                       bytes      = NULL;
-  bool                               additional = false;
+  cardano_error_t                    code        = CARDANO_SUCCESS;
+  cardano_transaction_input_set_t*   inputs      = NULL;
+  cardano_transaction_output_list_t* outputs     = NULL;
+  cardano_transaction_output_t*      output      = NULL;
+  cardano_withdrawal_map_t*          withdrawals = NULL;
+  cardano_multi_asset_t*             mint        = NULL;
+  cardano_blake2b_hash_t*            hash        = NULL;
+  cardano_guard_set_t*               guards      = NULL;
+  cardano_credential_t*              credential  = NULL;
+  lean_object*                       children    = lean_box(0);
+  lean_object*                       entries     = lean_box(0);
+  lean_object*                       bytes       = NULL;
+  bool                               additional  = false;
 
   inputs = cardano_transaction_body_get_inputs(body);
   TRY(serialize_input_set(inputs, &bytes));
@@ -589,10 +600,12 @@ read_body(cardano_transaction_body_t* body, lean_object** result)
     additional                       = additional || value != NULL;
     cardano_certificate_set_unref(&value);
   }
+  withdrawals = cardano_transaction_body_get_withdrawals(body);
+  if (withdrawals != NULL)
   {
-    cardano_withdrawal_map_t* value = cardano_transaction_body_get_withdrawals(body);
-    additional                      = additional || value != NULL;
-    cardano_withdrawal_map_unref(&value);
+    TRY(serialize_withdrawals(withdrawals, &bytes));
+    children = component_cons(component_leaf(5, 0, bytes), children);
+    bytes    = NULL;
   }
   {
     cardano_update_t* value = cardano_transaction_body_get_update(body);
@@ -651,6 +664,7 @@ cleanup:
   cardano_transaction_input_set_unref(&inputs);
   cardano_transaction_output_list_unref(&outputs);
   cardano_transaction_output_unref(&output);
+  cardano_withdrawal_map_unref(&withdrawals);
   cardano_multi_asset_unref(&mint);
   cardano_blake2b_hash_unref(&hash);
   cardano_guard_set_unref(&guards);

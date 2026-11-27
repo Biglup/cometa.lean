@@ -18,6 +18,7 @@ limitations under the License.
 import Cometa.InputSet
 import Cometa.Lovelace
 import Cometa.Output
+import Cometa.Withdrawals
 
 /-! Explicit body construction and inspection using native constructors, setters,
 readers and getters. Imported bodies retain all their original bytes, including
@@ -27,14 +28,6 @@ fields whose typed construction is not implemented yet. No balancing is implied.
 namespace Cometa
 
 -- TYPES ----------------------------------------------------------------------
-
-/-- Network discriminator carried by the optional transaction-body field. -/
-inductive Network where
-  /-- Test networks, including preprod and preview. -/
-  | testnet
-  /-- Cardano mainnet. -/
-  | mainnet
-  deriving DecidableEq, BEq
 
 namespace TransactionBody
 
@@ -55,6 +48,8 @@ structure Config where
   invalidAfter : Option UInt64 := none
   /-- Inclusive lower validity slot. -/
   invalidBefore : Option UInt64 := none
+  /-- Reward withdrawals; absence differs from an explicitly empty map. -/
+  withdrawals : Option Withdrawals := none
   /-- Auxiliary-data commitment, without constructing or checking its payload. -/
   auxiliaryDataHash : Option (Hash 32) := none
   /-- Signed mint/burn bundle; ada must be zero. -/
@@ -122,6 +117,7 @@ private def Config.toNative (config : Config) : EIO Error Internal.Component := 
   fields := addNumber 17 (config.totalCollateral.map fun coin => coin.value.toUInt64) fields
   fields := addNumber 21 (config.treasuryValue.map fun coin => coin.value.toUInt64) fields
   fields := addNumber 22 (config.donation.map fun coin => coin.value.toUInt64) fields
+  fields := addBytes 5 (config.withdrawals.map Withdrawals.toCbor) fields
   fields := addBytes 7 (config.auxiliaryDataHash.map Hash.bytes) fields
   fields := addBytes 11 (config.scriptDataHash.map Hash.bytes) fields
   fields := addBytes 13 (config.collateral.map InputSet.toCbor) fields
@@ -154,6 +150,7 @@ private def readConfig (fee : UInt64) (fields : List Internal.Component) : EIO E
     match kind with
     | 0 | 1 => pure ()
     | 3 => config := { config with invalidAfter := some number }
+    | 5 => config := { config with withdrawals := some (← Withdrawals.ofCbor bytes) }
     | 8 => config := { config with invalidBefore := some number }
     | 7 => config := { config with auxiliaryDataHash := some (← EIO.ofExcept (Hash.ofBytes bytes)) }
     | 9 => config := { config with mint := some (← Value.ofMintCbor bytes) }

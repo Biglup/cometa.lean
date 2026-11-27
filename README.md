@@ -40,7 +40,7 @@ The native adapter uses cardano-c **2.0.0-rc.7**; the toolchain is pinned to
 
 The API constructs multi-asset outputs, native and versioned Plutus scripts, and
 Plutus data. It now constructs checked input sets, UTxOs, core transaction bodies,
-and unsigned transactions through cardano-c. Wallets, remaining advanced body
+reward accounts, withdrawal maps, and unsigned transactions through cardano-c. Wallets, remaining advanced body
 and witness APIs, balancing, signing, and submission are still being implemented. Proofs describe the Lean models and
 checked results; they do not verify all cardano-c or ledger execution.
 
@@ -68,9 +68,10 @@ independent-consumer checks, memory checks, and API documentation generation.
 | [InspectTransaction.lean](Examples/InspectTransaction.lean) | Read transaction CBOR, calculate its ID, and inspect its fee, inputs, and output summaries. |
 | [BuildOutput.lean](Examples/BuildOutput.lean) | Construct a multi-asset output, check its encoding through C, and decode its assets, inline datum and reference script. |
 | [BuildTransaction.lean](Examples/BuildTransaction.lean) | Read a supplied UTxO, create payment and change outputs, and assemble an unsigned transaction with explicit fee and validity. |
+| [WithdrawRewards.lean](Examples/WithdrawRewards.lean) | Add a reward withdrawal to a supplied UTxO and return the combined value, less an explicit fee, in an unsigned transaction. |
 
-All are complete single-file programs. These offline examples do not build,
-sign, or submit transactions.
+All are complete single-file programs. Construction examples produce unsigned
+transactions; signing and submission are not yet implemented.
 
 ### Inspect an address
 
@@ -233,7 +234,7 @@ transaction can be submitted.
 
 `TransactionBody.create` exposes explicit fee/validity, signed minting, auxiliary
 and script-data hashes, collateral and return/total, reference inputs, key/script
-guards, network, treasury value and donation. Native code performs construction,
+guards, reward withdrawals, network, treasury value and donation. Native code performs construction,
 serialization and inspection. `Transaction.ofBody` creates an empty native witness
 set and assembles the transaction while retaining the original body encoding.
 
@@ -247,3 +248,36 @@ constructors. `hasAdditionalFields` reports those fields; `toConfig` refuses a
 reconstruction that would drop them. Rebuilding modeled fields can still normalize
 encodings. The native writer omits empty guards, so construction explicitly rejects
 `guards := some []`; imported empty guards remain preserved during assembly.
+
+### Reward withdrawals
+
+Construct key or script reward accounts with `RewardAccount.create`, or parse an
+existing Bech32 account with `RewardAccount.ofString`. `Withdrawals.ofList` binds
+the native withdrawal map and rejects duplicate accounts. Zero withdrawals are
+retained, which also permits the zero-amount script-withdrawal pattern.
+
+```lean
+let account ← RewardAccount.ofString rewardAddress
+let amount ← EIO.ofExcept (Lovelace.ofNat 2000000)
+let withdrawals ← Withdrawals.ofList [⟨account, amount⟩]
+
+let body ← TransactionBody.create {
+  inputs, outputs, fee
+  withdrawals := some withdrawals
+  invalidAfter := some 100000000 }
+let transaction ← Transaction.ofBody body
+```
+
+The complete example includes input loading, output construction and error handling:
+
+```sh
+lake exe withdrawRewards Examples/utxo.cbor.hex \
+  stake_test1uqehkck0lajq8gr28t9uxnuvgcqrc6070x3k9r8048z8y5gssrtvn \
+  2000000 170000 100000000
+```
+
+It uses an explicit 2 ADA reward amount and returns 6.83 ADA from the synthetic
+5 ADA input after the supplied fee. Actual rewards, registration, input freshness,
+fees, witnesses and script execution must be resolved for a live transaction.
+`Withdrawals.accounts_unique` proves uniqueness of the checked native snapshot;
+it does not prove that the accounts have rewards or that withdrawal is authorized.

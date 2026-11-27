@@ -19,7 +19,8 @@ limitations under the License.
 
 ## Scope and baseline
 
-Full transaction-building parity is the target. Lean now provides typed output construction and transaction inspection, but
+Full transaction-building parity is the target. Lean provides typed outputs, core
+transaction bodies, reward withdrawals and unsigned assembly, but
 complete transaction assembly and workflow dependencies remain open. Every remaining
 row below is a required implementation area, not an optional example backlog.
 
@@ -42,14 +43,14 @@ audit. Reconcile the baseline whenever upstream changes.
 
 | Area | Required public capabilities | Current Lean coverage |
 | --- | --- | --- |
-| Primitive values | Addresses/credentials and their construction, networks, hashes, transaction IDs, asset IDs/names, bounded coin/asset quantities, rationals and slots | Address parsing, fixed-size hashes, transaction/policy/asset IDs and names; other primitive families remain open |
+| Primitive values | Addresses/credentials and their construction, networks, hashes, transaction IDs, asset IDs/names, bounded coin/asset quantities, rationals and slots | Address parsing, native key/script reward-account construction, fixed-size hashes, transaction/policy/asset IDs and names; other primitive families remain open |
 | Values and outputs | Multi-asset values, complete outputs, datum hashes/inline datums, reference scripts, exact encodings where required | Signed bundles, output/mint encoding, typed map/legacy output construction, all datum forms and reference scripts; semantic decoding implemented |
 | Inputs and UTxOs | Spending/reference/collateral inputs, resolved outputs, uniqueness and disjointness rules | Native reference/input-set/UTxO construction and inspection; checked uniqueness and explicit proved disjointness checks |
-| Body fields | Fee, validity interval, network, mint/burn, withdrawals, certificates, required signers/guards, hashes, collateral/return/total, legacy updates and all optional fields | Native core-body construction and getters for keys 0, 1, 2, 3, 7, 8, 9, 11, 13–18, 21–22; remaining fields listed below |
+| Body fields | Fee, validity interval, network, mint/burn, withdrawals, certificates, required signers/guards, hashes, collateral/return/total, legacy updates and all optional fields | Native core-body construction and getters for keys 0, 1, 2, 3, 5, 7, 8, 9, 11, 13–18, 21–22; remaining fields listed below |
 | Scripts and data | Every native-script variant; pinned Plutus V1/V2/V3/V4 support; arbitrary Plutus data, script/datum hashes and language discrimination | Typed native scripts, Plutus V1–V4 wrappers/hashes, all Plutus data constructors, checked imported datum bytes; semantic decoding implemented; VM operations remain open |
 | Witnesses and redeemers | Verification-key and bootstrap witnesses, native/Plutus script witnesses, datums, all redeemer purposes, budgets, purpose/index mapping, merging and signing | Opaque preservation only |
 | Metadata and auxiliary data | All metadata forms, scripts, auxiliary-data encoding/hash and body commitment | Opaque preservation only |
-| Staking and pools | All certificate variants, registration/deregistration, delegation and combinations, pool registration/retirement, relays/metadata/owners, reward withdrawals and applicable BLS fields | Missing |
+| Staking and pools | All certificate variants, registration/deregistration, delegation and combinations, pool registration/retirement, relays/metadata/owners, reward withdrawals and applicable BLS fields | Native key/script reward accounts and checked withdrawal maps; certificates, pools and BLS fields remain open |
 | Governance | DReps, committee credentials, anchors, constitution, all governance actions, votes, proposals, deposits/refunds, treasury/donations and parameter changes | Missing |
 | Protocol parameters | Complete snapshots and updates, cost models, prices/budgets, voting thresholds, era-specific fields, version/availability distinctions | Missing |
 | Contextual transactions | Subtransaction bodies/builders/witnesses, guards and required top-level guards, direct deposits, account-balance intervals, starting-balance requirements, contextual indices and batch accounting | Missing |
@@ -90,8 +91,26 @@ This is a construction slice, not closure of the full component-API rows.
 | Native body constructor and setters/getters | `TransactionBody.Config`, `create/ofCbor`, `view`, `toConfig` | Combined fee, validity, hashes, mint, collateral, guards, network, reference inputs and treasury fields; independent base body/hash vector |
 | `cardano_transaction_new`, empty witness-set constructor, validity setter and writer | `Transaction.ofBody` | Exact nonminimal/imported body bytes and IDs, declared validity flags, unmodeled-field retention, repeated native ownership |
 
-Typed construction is still required for body keys 4 (certificates), 5
-(withdrawals), 6 (legacy updates), 19–20 (voting/proposals), and 23–27
+### Reward-account and withdrawal evidence
+
+| Native boundary | Public Lean API | Evidence / remaining scope |
+| --- | --- | --- |
+| `cardano_reward_address_from_credentials/from_bytes`, network/credential/byte getters | `RewardAccount.create/ofBytes/ofString/ofAddress`, `network`, `credential`, `toBytes/toString/toAddress` | Key/script × mainnet/testnet vectors; exact 29-byte and reward-header validation; reserved networks rejected; lowercase native Bech32 only |
+| `cardano_withdrawal_map_new/insert/from_cbor/to_cbor/get_key_value_at` | `Withdrawals.ofList/ofCbor`, `entries`, `toCbor`, `totalLovelace` | Native ordering; duplicate requested/imported account rejection; zero and UInt64 maximum amounts; unbounded total; truncation/trailing errors; exact imported bytes; `accounts_unique` theorem over checked snapshots |
+| `cardano_transaction_body_set_withdrawals/get_withdrawals`, body key 5 | `TransactionBody.Config.withdrawals`, `create/ofCbor/toConfig`, `Transaction.ofBody` | Absent versus present-empty; combined body fields; independent encoding/hash vector; exact imported-body assembly; nested invalid-key and duplicate rejection |
+
+The pinned reward parser can normalize payment headers and ignore extra bytes.
+The adapter validates raw map keys and reward bytes before parsing, using the
+native CBOR reader for map traversal. Text imports must match the native lowercase
+display encoding. Native indexed map getters retain duplicate entries; Lean checks
+uniqueness rather than looking up a key and accidentally repeating its first amount.
+Original map bytes are retained by `Withdrawals`; embedding a map in a newly built
+body normalizes its encoding through the native writer. Existing body bytes remain
+unchanged during assembly. No rewards query, registration, authorization, minimum
+fee or script execution is established by these offline checks.
+
+Typed construction is still required for body keys 4 (certificates),
+6 (legacy updates), 19–20 (voting/proposals), and 23–27
 (contextual/subtransaction/account fields). Native parsing and assembly preserve
 these fields; a partial view is not counted as typed construction coverage.
 `toConfig` rejects bodies containing them rather than silently dropping data.

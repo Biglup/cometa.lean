@@ -20,6 +20,7 @@ import Tests.Transaction
 import Tests.Output
 import Tests.Decoding
 import Tests.Assembly
+import Tests.Withdrawals
 
 /-! Boundary and native integration checks. No credentials or network are used. -/
 
@@ -112,4 +113,5 @@ def main : IO Unit := do
   Tests.Output.run
   Tests.Decoding.run
   Tests.Assembly.run
+  Tests.Withdrawals.run
   IO.println "Cometa boundary and native integration tests passed"
