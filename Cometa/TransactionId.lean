@@ -31,6 +31,7 @@ structure TransactionId where
   bytes : ByteArray
   /-- BLAKE2b-256 identifiers contain exactly 32 bytes. -/
   isValid : bytes.size = 32
+  deriving DecidableEq
 
 namespace TransactionId
 
@@ -52,9 +53,6 @@ def toBytes (identifier : TransactionId) : ByteArray := identifier.bytes
 
 /-- The 64 lowercase hexadecimal digits, without a prefix. -/
 def toHex (identifier : TransactionId) : String := Hex.ofBytes identifier.bytes
-
-instance : BEq TransactionId where
-  beq left right := left.bytes == right.bytes
 
 instance : ToString TransactionId where
   toString := toHex

@@ -34,7 +34,8 @@ inductive Component where
 -- FOREIGN IMPORTS ------------------------------------------------------------
 
 /-- Construct native objects and serialize with their native writer.
-Families: 0 credential, 1 value, 2 mint, 3 data, 4 native script, 5 script, 6 output, 7 legacy output (encoding only).
+Families: 0 credential, 1 value, 2 mint, 3 data, 4 native script, 5 script, 6 output, 7 legacy output (encoding only),
+8 input, 9 input set, 10 UTxO, 11 transaction body.
 -/
 @[extern "cometa_lean_component_encode"]
 opaque componentEncode (family : UInt8) (fields : @& Component) : EIO UInt32 ByteArray

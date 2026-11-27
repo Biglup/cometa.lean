@@ -150,6 +150,29 @@ These are specifications and checked invariants, not replacement native codecs.
 Tests record native acceptance/normalization differences, including oversized
 Plutus leaves and duplicate policy-map coalescing, without claiming ledger validity.
 
+## Native core-body assembly slice
+
+Added native output-reference/input-set/UTxO codecs, complete resolved-output
+snapshots, checked input uniqueness, and an explicit disjointness checker with
+soundness evidence over native observations. The core body API binds native
+constructors, setters, getters and hashing for inputs/outputs/fees, validity,
+mint, commitments, collateral, guards, network, reference inputs and treasury
+fields. `Transaction.ofBody` constructs an empty native witness set and assembles
+an unsigned transaction while preserving the exact imported body cache.
+
+The new single-file `BuildTransaction` example reads a supplied UTxO, creates a
+payment and explicit change, and prints unsigned CBOR. It is not a balancing,
+wallet, signing or submission implementation. Tests cover combined fields,
+independent body/hash vectors, absent/empty distinctions, native normalization,
+truncation/error paths, constructor privacy and native ownership. The clean
+consumer and source-archive consumer now run all four examples.
+
+Remaining typed body families are certificates, withdrawals, updates, voting,
+proposals and contextual/subtransaction/account fields. They are retained in
+imported bytes but block `toConfig` reconstruction. Empty guards also block
+reconstruction because the pinned native writer omits them. Witness/auxiliary
+assembly and extension adapters remain required; this slice is not full parity.
+
 ## Remaining implementation sequence
 
 All stages below are required for completion. The sequence keeps each PR testable;
@@ -160,12 +183,13 @@ it does not defer less common transaction capabilities indefinitely.
    all Plutus data constructors, datum hashes/inline data, native scripts and every
    pinned Plutus version, and reference scripts. Preserve encoding where identity
    depends on it. Complete construction, serialization and semantic decoding for
-   these components; construction is implemented in the output slice above.
+   these components; native construction and decoding are implemented above.
 2. **Complete transaction components and assembly.** UTxOs, spending/reference/
    collateral inputs, all body fields, withdrawals, metadata and auxiliary data,
    witnesses/redeemers, protocol parameters/updates, every certificate/governance
    variant, and contextual/subtransaction fields. Provide complete typed builders
-   independently of balancing convenience functions; retain explicit era/context
+   independently of balancing convenience functions. Core native body assembly is
+   implemented above; complete the remaining typed families next. Retain era/context
    checks and the distinction between absent and empty fields.
 3. **Public extension contracts and concrete native instances.** Introduce ordinary
    Lean structures of functions for providers, evaluators, selectors, and signers.

@@ -69,6 +69,18 @@ example (output : Output) (address : Address) : Output := { output with address 
 #guard_msgs in
 #check EncodedOutput.mk
 
+/-- error: Unknown constant `Cometa.InputSet.mk` -/
+#guard_msgs in
+#check InputSet.mk
+
+/-- error: Unknown constant `Cometa.TransactionBody.mk` -/
+#guard_msgs in
+#check TransactionBody.mk
+
+/-- error: Unknown constant `Cometa.UTxO.mk` -/
+#guard_msgs in
+#check UTxO.mk
+
 -- MODEL LAWS -----------------------------------------------------------------
 
 example (left right : Plan) :
@@ -93,6 +105,12 @@ example (output : Output) : output.address.isPayment = true := Output.address_is
 example (output : Output) (checked : {bytes : ByteArray // bytes = output.toCbor}) :
     checked.val = output.toCbor := checked.property
 
+example (inputs : InputSet) : inputs.references.Nodup := InputSet.references_unique inputs
+
+example (left right : InputSet)
+    (success : (left.checkDisjoint right).isOk = true) : InputSet.Disjoint left right :=
+  InputSet.checkDisjoint_sound left right success
+
 -- INTERPRETER ---------------------------------------------------------------
 
 /-- info: "2.0.0-rc.7" -/
@@ -110,3 +128,12 @@ example (output : Output) (checked : {bytes : ByteArray // bytes = output.toCbor
 #eval (do
   let datum ← EncodedPlutusData.ofData (.integer 42)
   return datum.hash.bytes.size == 32 : EIO Error Bool).toIO (IO.userError ∘ toString)
+
+/-- info: true -/
+#guard_msgs in
+#eval (do
+  let inputs ← InputSet.ofList []
+  let fee ← EIO.ofExcept (Lovelace.ofNat 0)
+  let body ← TransactionBody.create { inputs, outputs := #[], fee }
+  let transaction ← Transaction.ofBody body
+  return transaction.id == body.id : EIO Error Bool).toIO (IO.userError ∘ toString)

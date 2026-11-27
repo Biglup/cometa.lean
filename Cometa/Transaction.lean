@@ -17,7 +17,8 @@ limitations under the License.
 
 import Cometa.Address
 import Cometa.Lovelace
-import Cometa.TransactionId
+import Cometa.OutputReference
+import Cometa.TransactionBody
 import Cometa.Internal.Transaction
 
 /-! Immutable transaction inspection through cardano-c.
@@ -31,19 +32,6 @@ are released within each call; observations use only Lean-owned values.
 namespace Cometa
 
 -- TYPES ----------------------------------------------------------------------
-
-/-- A reference to an output of an earlier transaction. -/
-structure OutputReference where
-  /-- Identifier of the transaction that created the output. -/
-  transactionId : TransactionId
-  /-- Zero-based index, retaining the native unsigned 64-bit representation.
-  Construction does not check whether this index exists or fits an era's limits.
-  -/
-  index : UInt64
-  deriving BEq
-
-instance : ToString OutputReference where
-  toString reference := s!"{reference.transactionId}#{reference.index}"
 
 namespace Transaction
 
@@ -103,6 +91,18 @@ def ofCbor (bytes : ByteArray) : EIO Error Transaction := do
   let spendingInputs ← EIO.ofExcept (inputs.mapM inputOfRaw)
   let ordinaryOutputs ← outputs.mapM outputOfRaw
   return ⟨bytes, identifier, feeAmount, validity, spendingInputs, ordinaryOutputs⟩
+
+/-- Assemble an unsigned transaction through native constructors with an empty
+witness set and no auxiliary data. This preserves the exact body and checks its
+observed native ID. A declared script-validity flag is not an evaluation result.
+The transaction is not balanced, signed, or ready for submission by this operation.
+-/
+def ofBody (body : TransactionBody) (scriptValidity : Bool := true) : EIO Error Transaction := do
+  let bytes ← (Internal.unsignedTransaction body.toCbor scriptValidity).adapt (.native "Transaction.ofBody")
+  let transaction ← ofCbor bytes
+  if transaction.identifier != body.id then
+    throw (.invalidInput "Native assembly changed the transaction body ID")
+  return transaction
 
 /-- Parse strict hexadecimal transaction CBOR. No prefix or whitespace is accepted. -/
 def ofHex (text : String) : EIO Error Transaction := do

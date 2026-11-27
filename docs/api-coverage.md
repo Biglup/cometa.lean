@@ -44,8 +44,8 @@ audit. Reconcile the baseline whenever upstream changes.
 | --- | --- | --- |
 | Primitive values | Addresses/credentials and their construction, networks, hashes, transaction IDs, asset IDs/names, bounded coin/asset quantities, rationals and slots | Address parsing, fixed-size hashes, transaction/policy/asset IDs and names; other primitive families remain open |
 | Values and outputs | Multi-asset values, complete outputs, datum hashes/inline datums, reference scripts, exact encodings where required | Signed bundles, output/mint encoding, typed map/legacy output construction, all datum forms and reference scripts; semantic decoding implemented |
-| Inputs and UTxOs | Spending/reference/collateral inputs, resolved outputs, uniqueness and disjointness rules | Spending-reference inspection only |
-| Body fields | Fee, validity interval, network, mint/burn, withdrawals, certificates, required signers/guards, hashes, collateral/return/total, legacy updates and all optional fields | Fee and spending/output inspection only |
+| Inputs and UTxOs | Spending/reference/collateral inputs, resolved outputs, uniqueness and disjointness rules | Native reference/input-set/UTxO construction and inspection; checked uniqueness and explicit proved disjointness checks |
+| Body fields | Fee, validity interval, network, mint/burn, withdrawals, certificates, required signers/guards, hashes, collateral/return/total, legacy updates and all optional fields | Native core-body construction and getters for keys 0, 1, 2, 3, 7, 8, 9, 11, 13–18, 21–22; remaining fields listed below |
 | Scripts and data | Every native-script variant; pinned Plutus V1/V2/V3/V4 support; arbitrary Plutus data, script/datum hashes and language discrimination | Typed native scripts, Plutus V1–V4 wrappers/hashes, all Plutus data constructors, checked imported datum bytes; semantic decoding implemented; VM operations remain open |
 | Witnesses and redeemers | Verification-key and bootstrap witnesses, native/Plutus script witnesses, datums, all redeemer purposes, budgets, purpose/index mapping, merging and signing | Opaque preservation only |
 | Metadata and auxiliary data | All metadata forms, scripts, auxiliary-data encoding/hash and body commitment | Opaque preservation only |
@@ -53,7 +53,7 @@ audit. Reconcile the baseline whenever upstream changes.
 | Governance | DReps, committee credentials, anchors, constitution, all governance actions, votes, proposals, deposits/refunds, treasury/donations and parameter changes | Missing |
 | Protocol parameters | Complete snapshots and updates, cost models, prices/budgets, voting thresholds, era-specific fields, version/availability distinctions | Missing |
 | Contextual transactions | Subtransaction bodies/builders/witnesses, guards and required top-level guards, direct deposits, account-balance intervals, starting-balance requirements, contextual indices and batch accounting | Missing |
-| Transaction assembly | Typed construction of every supported body/witness/auxiliary combination; historical/mempool/block frames; exact imported bytes and safe updates | Exact imported bytes and native inspection only |
+| Transaction assembly | Typed construction of every supported body/witness/auxiliary combination; historical/mempool/block frames; exact imported bytes and safe updates | Native unsigned assembly with empty witnesses, exact imported body preservation, and inspection; typed witness/auxiliary assembly remains open |
 | Building and balancing | Explicit fees, minimum ada, execution/reference-script fees, deposits/refunds, mint/burn/withdrawal accounting, change, collateral, witness estimates, budgets, hashes and convergence | Lovelace payment-intention model only |
 | Keys and wallets | Encrypted wallet interop, derivation, supported signing/witness paths, external signer injection and secret cleanup | Missing |
 | Providers and lifecycle | All query/evaluation/submission/confirmation operations, built-in backends and custom/native adapters | Missing |
@@ -79,6 +79,31 @@ This is a construction slice, not closure of the full component-API rows.
 | Native script kinds 0–6 (including require guard); native variant constructors/getters; `cardano_script_from_cbor` / `get_hash` | `NativeScript` and `Script.ofNative` | All constructors, nested scripts, 64-bit threshold/slot boundaries, independent signature-script hash; semantic decoding and exact imported script hashes |
 | Script language tags 1–4 | `PlutusVersion`, `Script.ofPlutus`, `view`, `toCbor`, `hash` | Independent language-discriminated hashes and reference-output round trips for every version; semantic decoding implemented; program execution and parameter application remain open |
 | Plutus constructors 121–127 / 1280–1400 / 102; maps/lists/integers/bytes; `cardano_plutus_data_new_*`, `from_cbor`, `to_cbor`, typed getters and `cardano_blake2b_compute_hash` | `PlutusData.toCbor`, `EncodedPlutusData.ofData`, `ofCbor`, `toCbor`, `hash` | Independent vectors, arbitrary signed bignums, 64-byte chunks, preserved nonminimal identity, malformed imports; `PlutusData.ofCbor` and `EncodedPlutusData.toData` semantic views |
+
+### Native transaction construction
+
+| Native boundary | Public Lean API | Evidence / remaining scope |
+| --- | --- | --- |
+| `cardano_transaction_input_new/from_cbor/to_cbor` and getters | `OutputReference.toCbor/ofCbor` | Independent input vector, UInt64 index boundary, complete-input rejection |
+| Native input-set constructor, insertion, reader, writer and getters | `InputSet.ofList/ofCbor`, `checkDisjoint` | Reject requested/imported duplicate references; native ordering; `references_unique` and checker soundness |
+| `cardano_utxo_new/from_cbor/to_cbor`, input/output getters | `UTxO.create/ofCbor` | Complete rich-output vector; truncation/error paths; no unspentness assertion |
+| Native body constructor and setters/getters | `TransactionBody.Config`, `create/ofCbor`, `view`, `toConfig` | Combined fee, validity, hashes, mint, collateral, guards, network, reference inputs and treasury fields; independent base body/hash vector |
+| `cardano_transaction_new`, empty witness-set constructor, validity setter and writer | `Transaction.ofBody` | Exact nonminimal/imported body bytes and IDs, declared validity flags, unmodeled-field retention, repeated native ownership |
+
+Typed construction is still required for body keys 4 (certificates), 5
+(withdrawals), 6 (legacy updates), 19–20 (voting/proposals), and 23–27
+(contextual/subtransaction/account fields). Native parsing and assembly preserve
+these fields; a partial view is not counted as typed construction coverage.
+`toConfig` rejects bodies containing them rather than silently dropping data.
+
+Required signers and guards share native body field 14. `Config.guards` represents
+both key and script credentials; the native writer chooses bare-key-hash or
+credential form. It omits explicitly empty guard sets. `create` and `toConfig`
+reject that unsupported reconstruction case; imported bytes remain usable for
+assembly. Other supported optional fields preserve absent versus present-empty
+state. Native input-set serialization emits tag 258, so rebuilding normalizes
+untagged input-set representations. Imported body bytes are never rebuilt during
+`Transaction.ofBody`.
 
 The C value implementation uses signed 64-bit native-asset quantities. This slice
 checks that native bound explicitly; it must not be advertised as establishing

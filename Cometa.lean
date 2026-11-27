@@ -21,5 +21,6 @@ import Cometa.Address
 import Cometa.Plan
 import Cometa.Transaction
 import Cometa.Output
+import Cometa.UTxO
 
 /-! Cometa's public address, value, output, script, datum, plan, and transaction APIs. -/
