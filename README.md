@@ -34,15 +34,14 @@ limitations under the License.
 
 # Cometa.lean
 
-Typed Cardano values, scripts, data, and outputs for Lean 4, with address and
-transaction inspection.
+Native Cardano transaction construction and inspection for Lean 4.
 The native adapter uses cardano-c **2.0.0-rc.7**; the toolchain is pinned to
 **Lean 4.36.0**.
 
 The API constructs multi-asset outputs, native and versioned Plutus scripts, and
-Plutus data. It also parses addresses and serialized transactions and models
-ordered payments. Wallets, complete transaction assembly, balancing, signing, and
-submission are still being implemented. Proofs describe the Lean models and
+Plutus data. It now constructs checked input sets, UTxOs, core transaction bodies,
+and unsigned transactions through cardano-c. Wallets, remaining advanced body
+and witness APIs, balancing, signing, and submission are still being implemented. Proofs describe the Lean models and
 checked results; they do not verify all cardano-c or ledger execution.
 
 ## Build
@@ -68,6 +67,7 @@ independent-consumer checks, memory checks, and API documentation generation.
 | [InspectAddress.lean](Examples/InspectAddress.lean) | Parse a recipient and amount, then construct an ordered payment plan. |
 | [InspectTransaction.lean](Examples/InspectTransaction.lean) | Read transaction CBOR, calculate its ID, and inspect its fee, inputs, and output summaries. |
 | [BuildOutput.lean](Examples/BuildOutput.lean) | Construct a multi-asset output, check its encoding through C, and decode its assets, inline datum and reference script. |
+| [BuildTransaction.lean](Examples/BuildTransaction.lean) | Read a supplied UTxO, create payment and change outputs, and assemble an unsigned transaction with explicit fee and validity. |
 
 All are complete single-file programs. These offline examples do not build,
 sign, or submit transactions.
@@ -214,3 +214,36 @@ models. Their theorems describe those models and executable validators, not the
 native algorithms. Native parsing is not ledger validation: the pinned datum
 reader accepts oversized byte leaves, and its multi-asset reader coalesces
 repeated policy maps. Imported encoded wrappers retain the supplied bytes.
+
+## Assemble an unsigned transaction
+
+The single-file example uses a synthetic 5 ADA UTxO fixture and the native input,
+output, body, and transaction constructors:
+
+```sh
+lake exe buildTransaction Examples/utxo.cbor.hex \
+  addr_test1vz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzerspjrlsz \
+  2000000 170000 100000000
+```
+
+It prints an unsigned transaction containing the payment and change. The fixture
+is offline and does not identify a real spendable output. Fee, validity, minimum
+ada, UTxO freshness, script evaluation and witnesses must be handled before a
+transaction can be submitted.
+
+`TransactionBody.create` exposes explicit fee/validity, signed minting, auxiliary
+and script-data hashes, collateral and return/total, reference inputs, key/script
+guards, network, treasury value and donation. Native code performs construction,
+serialization and inspection. `Transaction.ofBody` creates an empty native witness
+set and assembles the transaction while retaining the original body encoding.
+
+`InputSet` checks uniqueness of the actual native result. `checkDisjoint` returns
+evidence about two observed sets; the caller chooses when an era/workflow requires
+that relationship. `UTxO` pairs a reference with a complete resolved output without
+asserting that it is unspent on chain.
+
+Imported bodies preserve all bytes, including fields not yet covered by typed
+constructors. `hasAdditionalFields` reports those fields; `toConfig` refuses a
+reconstruction that would drop them. Rebuilding modeled fields can still normalize
+encodings. The native writer omits empty guards, so construction explicitly rejects
+`guards := some []`; imported empty guards remain preserved during assembly.

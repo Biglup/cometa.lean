@@ -25,18 +25,19 @@ also available for Linux ARM64 and macOS; availability is not a tested-platform 
 Windows packaging has not been implemented.
 
 ```sh
-lake build cometaTests inspectAddress inspectTransaction buildOutput
+lake build cometaTests inspectAddress inspectTransaction buildOutput buildTransaction
 lake test
 lake lean Tests/Invariants.lean
 lake env leanchecker Cometa.Plan
 lake env leanchecker Cometa.TransactionId
 lake env leanchecker Cometa.Value
 lake env leanchecker Cometa.Output
+lake env leanchecker Cometa.InputSet
 lake exe inspectTransaction Examples/transaction.cbor.hex
 python3 scripts/check-source.py
 python3 -m unittest discover -s Tests/Packaging -v
 python3 scripts/check-consumer.py
-clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h
+clang-format-18 --dry-run --Werror cbits/cometa_lean.c cbits/cometa_components.h cbits/cometa_transaction_build.h
 ```
 
 Lake runs native preparation before compiling the adapter. It downloads cardano-c
@@ -246,3 +247,40 @@ independent construction vectors. Native list construction chooses indefinite
 nonempty Plutus lists; imported definite lists retain their original identity.
 `Output.checkNativeEncoding` checks native round-trip stability only. It is not an
 independent serializer comparison or a universal proof about the native codec.
+
+## Input, UTxO and body assembly audit
+
+The additional component families bind native input, input-set, UTxO and body
+constructors/readers/writers/getters. `cbits/cometa_transaction_build.h` is a
+tracked Lake source dependency included once after shared component helpers.
+All returned native references are released, and reused locals are cleared after
+unref. Borrowed scalar pointers from body getters are read while the body lives.
+The unsigned-assembly entry point has generated C signature
+`lean_object* cometa_lean_unsigned_transaction(lean_object*, uint8_t)`: borrowed
+body bytes, unboxed validity flag, erased world and an owned EIO result.
+
+The native body parser caches original CBOR. Assembly passes that object directly
+to `cardano_transaction_new` without clearing its cache or rebuilding fields.
+Tests compare complete transaction bytes for nonminimal bodies and bodies with
+currently unmodeled fields, as well as independently computed BLAKE2b-256 IDs.
+The tagged construction vector adds native input-set tag 258 to the existing
+rich-output fixture; its digest is computed independently using Python hashlib.
+The UTxO example uses a synthetic all-zero reference and the published CIP-19
+address vector, with 5 ADA; it is not live wallet material.
+
+The pinned C API represents required signers through key guards. The typed guard
+list binds the shared native getter/setter directly, including script credentials.
+Native guard serialization omits empty sets; the Lean constructor rejects an
+explicit empty request instead of losing presence silently. Native body getters
+for the ten unmodeled field families set `hasAdditionalFields`, preventing a
+partial `view` from being offered through `toConfig` for reconstruction.
+
+Body parsing already rejects duplicate body keys. Nested output parsing can hit
+the older duplicate-output-key overwrite issue documented above, so a preflight
+uses native CBOR reader operations to apply the existing output-key guard to UTxO
+outputs, ordinary body outputs and collateral returns. Field codecs remain native.
+
+`InputSet.references_unique` describes the copied native result after validation.
+`checkDisjoint_sound` concerns two observed input sets, not native algorithm
+correctness or an era-specific spending/reference/collateral policy. No network,
+minimum-fee, balancing, script-execution or signature guarantee is inferred.

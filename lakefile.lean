@@ -23,7 +23,7 @@ open System Lake DSL
 
 package cometa where
   version := v!"0.1.0"
-  description := "Cardano address and transaction inspection with payment plans for Lean"
+  description := "Native Cardano transaction construction and inspection for Lean"
   license := "Apache-2.0"
   moreLeanArgs := #["-DwarningAsError=true", "-Dlinter.missingDocs=true"]
 
@@ -52,6 +52,10 @@ input_file componentSource where
   path := "cbits" / "cometa_components.h"
   text := true
 
+input_file transactionBuildSource where
+  path := "cbits" / "cometa_transaction_build.h"
+  text := true
+
 target nativeLibrary _pkg : Dynlib := do
   let file ← nativeLibraryFile.fetch
   file.mapM fun path => do
@@ -60,6 +64,7 @@ target nativeLibrary _pkg : Dynlib := do
 target bridgeObject pkg : FilePath := do
   let source ← bridgeSource.fetch
   let components ← componentSource.fetch
+  let transactionBuild ← transactionBuildSource.fetch
   let native ← nativeLibraryFile.fetch
   let flags := #["-I", (← getLeanIncludeDir).toString,
     "-I", (pkg.dir / ".lake" / "native" / "include").toString]
@@ -67,6 +72,8 @@ target bridgeObject pkg : FilePath := do
     #["-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror"] "cc" do
       let _ ← components.await
       addTrace components.getTrace
+      let _ ← transactionBuild.await
+      addTrace transactionBuild.getTrace
       addTrace (← getLeanTrace)
       let _ ← native.await
       addTrace native.getTrace
@@ -93,7 +100,7 @@ lean_lib Cometa where
 
 lean_lib TestSupport where
   roots := #[`Tests.Transaction, `Tests.TransactionFixtures, `Tests.Output, `Tests.OutputFixtures,
-    `Tests.Decoding]
+    `Tests.Decoding, `Tests.Assembly]
 
 @[test_driver]
 lean_exe cometaTests where
@@ -107,3 +114,6 @@ lean_exe inspectTransaction where
 
 lean_exe buildOutput where
   root := `Examples.BuildOutput
+
+lean_exe buildTransaction where
+  root := `Examples.BuildTransaction

@@ -1162,6 +1162,8 @@ cleanup:
   return code;
 }
 
+#include "cometa_transaction_build.h"
+
 /* FOREIGN ENTRY POINTS ******************************************************/
 
 /* Every family uses the concrete native constructors and codecs, not a second
@@ -1173,6 +1175,42 @@ cometa_lean_component_encode(uint8_t family, b_lean_obj_arg fields)
   lean_object*    bytes = NULL;
   switch (family)
   {
+    case 8:
+    {
+      cardano_transaction_input_t* value = NULL;
+      code                               = build_input(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_input(value, &bytes);
+      cardano_transaction_input_unref(&value);
+      break;
+    }
+    case 9:
+    {
+      cardano_transaction_input_set_t* value = NULL;
+      code                                   = build_input_set(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_input_set(value, &bytes);
+      cardano_transaction_input_set_unref(&value);
+      break;
+    }
+    case 10:
+    {
+      cardano_utxo_t* value = NULL;
+      code                  = build_utxo(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_utxo(value, &bytes);
+      cardano_utxo_unref(&value);
+      break;
+    }
+    case 11:
+    {
+      cardano_transaction_body_t* value = NULL;
+      code                              = build_body(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_body(value, &bytes);
+      cardano_transaction_body_unref(&value);
+      break;
+    }
     case 0:
     {
       cardano_credential_t* value = NULL;
@@ -1259,6 +1297,42 @@ cometa_lean_component_decode(uint8_t family, b_lean_obj_arg bytes)
   lean_object*    fields = NULL;
   switch (family)
   {
+    case 8:
+    {
+      cardano_transaction_input_t* value = NULL;
+      code                               = parse_input(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_input(value, &fields);
+      cardano_transaction_input_unref(&value);
+      break;
+    }
+    case 9:
+    {
+      cardano_transaction_input_set_t* value = NULL;
+      code                                   = parse_input_set(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_input_set(value, &fields);
+      cardano_transaction_input_set_unref(&value);
+      break;
+    }
+    case 10:
+    {
+      cardano_utxo_t* value = NULL;
+      code                  = parse_utxo(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_utxo(value, &fields);
+      cardano_utxo_unref(&value);
+      break;
+    }
+    case 11:
+    {
+      cardano_transaction_body_t* value = NULL;
+      code                              = parse_body(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_body(value, &fields);
+      cardano_transaction_body_unref(&value);
+      break;
+    }
     case 0:
     {
       cardano_credential_t* value = NULL;
