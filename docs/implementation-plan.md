@@ -26,7 +26,27 @@ Proofs describe the Lean model and do not certify the native implementation or
 ledger acceptance. Keep examples in one file with named steps and one error
 boundary. Preserve Apache-2.0 notices and section separators throughout.
 
-## Current milestone: inspect a serialized transaction offline
+## Completion requirement
+
+The binding must expose all transaction-relevant APIs needed to construct any
+valid transaction in the ledger eras and protocol versions covered by the pinned
+cardano-c baseline, with capability parity against the other Cometa bindings.
+Payment examples are incremental milestones, not the final scope. New upstream
+era features require an explicit baseline update and coverage audit; being
+serializable does not imply a feature is activated on preprod or mainnet.
+
+Provide both a complete typed assembly API and convenient planning/balancing APIs.
+A high-level builder must not restrict callers to its predefined recipes. Every
+body field, witness kind, certificate, governance action, supported script language,
+and contextual/subtransaction feature must be constructible and inspectable.
+Opaque CBOR pass-through alone does not count as typed construction coverage.
+
+[API coverage and extension contracts](api-coverage.md) is the mandatory scope
+checklist. Track native adapters, custom Lean implementations, and proof coverage
+separately. Each implementation PR must update its affected coverage rows and
+record the relevant native exports, public APIs, and tests before claiming parity.
+
+## Completed milestone: inspect a serialized transaction offline
 
 This milestone is the execution scope of the transaction-inspection PR. It supplies
 the transaction representation needed by later signing and provider workflows,
@@ -87,32 +107,53 @@ allocations remain at exit. CI repeats these checks and tests the actual release
 source archive. There has been no preprod run, wallet access, signing, submission,
 version bump, or release publication in this milestone.
 
-## Subsequent milestones
+## Remaining implementation sequence
 
-These describe the dependency order beyond this PR; they are not implemented by
-an inspection API and must not be advertised as available.
+All stages below are required for completion. The sequence keeps each PR testable;
+it does not defer less common transaction capabilities indefinitely.
 
-1. **Multi-asset outputs and richer plans.** Policy IDs, byte-valued asset names,
-   bounded quantities, datum/reference-script representations, checked values,
-   output serialization, spending/reference inputs, minting, validity intervals,
-   and explicit fees/deposits. Prove useful accounting/order laws separately from
-   native serialization. Add an offline output-construction example.
-2. **Encrypted wallets and scoped signing.** Inspect the other bindings' encrypted
-   wallet format and key derivation. Introduce prompt-based password input, explicit
-   secret lifetime/cleanup, derivation/address discovery, and signing with witness
-   merging that preserves transaction-body bytes. Never print secrets or pass
-   passwords through command-line arguments. Test public vectors and wrong-password
-   failures before introducing a live workflow.
-3. **Provider reads.** Add a small provider interface with typed network/UTxO/protocol
-   parameters. Start with one provider and fixture-backed contract tests; then add
-   Koios, Kupmios, and Hydra without assuming their query capabilities are identical.
-   Define HTTP errors, timeouts, pagination, and unavailable data explicitly.
-4. **Build, sign, and submit.** Integrate native balancing and protocol parameters,
-   validate network/change address, expose evaluation and submission, compare the
-   returned ID, and await confirmation with a timeout. A single-file SendLovelace
-   example must unlock an encrypted wallet, build, sign, submit, and confirm.
-   Run against preprod only with an explicitly selected configuration and funds.
-5. **Broader parity and releases.** Match other bindings' examples for assets,
-   staking, scripts, governance, and contextual transactions as their APIs land.
-   Add provider matrices and preprod/Hydra integration coverage, then expand tested
-   platforms and publish a release whose notes match the implemented surface.
+1. **Complete values, scripts, and outputs.** Policy IDs, arbitrary byte asset names,
+   unsigned output quantities versus signed mint/burn quantities, checked values,
+   all Plutus data constructors, datum hashes/inline data, native scripts and every
+   pinned Plutus version, and reference scripts. Preserve encoding where identity
+   depends on it. Implement complete output construction and serialization.
+2. **Complete transaction components and assembly.** UTxOs, spending/reference/
+   collateral inputs, all body fields, withdrawals, metadata and auxiliary data,
+   witnesses/redeemers, protocol parameters/updates, every certificate/governance
+   variant, and contextual/subtransaction fields. Provide complete typed builders
+   independently of balancing convenience functions; retain explicit era/context
+   checks and the distinction between absent and empty fields.
+3. **Public extension contracts and concrete native instances.** Introduce ordinary
+   Lean structures of functions for providers, evaluators, selectors, and signers.
+   Publish typed requests/results and explicit errors. Wrap C largest-first and
+   random-improve selectors, native top-level/subtransaction evaluators, the C
+   provider-backed evaluator, and C provider implementations supplied through the
+   supported adapter boundary. Support custom Lean implementations and bridging
+   them into native builders. Test callback lifetimes, errors, and cleanup.
+4. **Proof-oriented validation of actual instances.** Define pure specifications
+   and executable validators with kernel-checked soundness proofs. Run the real C
+   instances from Lean, validate their returned snapshots, and expose checked
+   results where properties are decidable. Run the same conformance suite against
+   C-backed and custom instances. Keep finite execution evidence distinct from
+   universal correctness of the C algorithms; see the proof contract below.
+5. **Encrypted wallets and scoped signing.** Match the other bindings' encrypted
+   wallet format, derivation and signing features. Support prompt-based passwords,
+   explicit secret cleanup, witness merging, external signers, and preservation of
+   unchanged body bytes. Test public vectors and wrong-password/error paths.
+6. **Balancing and end-to-end workflows.** Inject provider, evaluator, coin selector,
+   and signer explicitly. Cover coin/asset conservation, implicit deposits/refunds,
+   minimum ada, all fee components, collateral, budget/commitment recalculation,
+   change and bounded convergence. Build/sign/submit/confirm examples must unlock
+   an encrypted wallet and show the main workflow in one file. Include advanced
+   script, governance, and contextual transactions, not just payments.
+7. **Provider implementations and full parity validation.** Cover Blockfrost, Koios,
+   Kupmios, Hydra, and the supported native-provider adapter. Exercise every query
+   and effect, pagination, absence, errors, timeouts, and unsupported capabilities.
+   Compare serialized fields, hashes, fees, selection, and evaluation with the
+   pinned native implementation and other bindings. Run preprod and a
+   preprod-backed Hydra deployment where those features are supported; use
+   appropriate ledger fixtures for features not activated there.
+8. **Release readiness.** Close every required coverage gap, match the other
+   bindings' example workflows, complete native/custom adapter conformance and
+   proof checks, audit platform support, and publish accurate feature/version
+   coverage. No partial milestone is advertised as full transaction parity.
