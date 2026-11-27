@@ -45,12 +45,16 @@ def verify(source: Path, consumer: Path) -> None:
     consumer.mkdir()
     shutil.copyfile(source / "lean-toolchain", consumer / "lean-toolchain")
     shutil.copyfile(source / "Examples/InspectAddress.lean", consumer / "Main.lean")
+    shutil.copyfile(source / "Examples/InspectTransaction.lean", consumer / "TransactionMain.lean")
     (consumer / "lakefile.lean").write_text(
         "import Lake\nopen Lake DSL\npackage consumer\n"
         f"require cometa from {json.dumps(str(source))}\n"
-        "lean_exe inspect where\n  root := `Main\n", encoding="utf-8")
+        "lean_exe inspect where\n  root := `Main\n"
+        "lean_exe inspectTransaction where\n  root := `TransactionMain\n", encoding="utf-8")
     address = "addr_test1vz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzerspjrlsz"
     subprocess.run(["lake", "exe", "inspect", address, "2000000"], cwd=consumer, check=True)
+    subprocess.run(["lake", "exe", "inspectTransaction",
+                    str(source / "Examples/transaction.cbor.hex")], cwd=consumer, check=True)
     print("Clean-source downstream consumer passed (automatic native setup)")
 
 

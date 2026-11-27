@@ -36,7 +36,7 @@ def main() -> None:
             continue
         text = path.read_text(encoding="utf-8")
         notice = text
-        if path.name in {"lean-toolchain", "lake-manifest.json"}:
+        if path.name in {"lean-toolchain", "lake-manifest.json"} or path.suffix == ".hex":
             sidecar = path.with_name(path.name + ".license")
             notice = sidecar.read_text(encoding="utf-8")
         if "SPDX-License-Identifier: Apache-2.0" not in notice:
