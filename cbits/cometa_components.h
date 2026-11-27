@@ -1170,6 +1170,9 @@ cleanup:
 /* Body construction depends on the helpers above. */
 #include "cometa_transaction_build.h"
 
+/* Key-witness merging uses body and auxiliary serialization helpers above. */
+#include "cometa_key_witnesses.h"
+
 /* FOREIGN ENTRY POINTS ******************************************************/
 
 /* Every family uses the concrete native constructors and codecs, not a second
@@ -1181,6 +1184,24 @@ cometa_lean_component_encode(uint8_t family, b_lean_obj_arg fields)
   lean_object*    bytes = NULL;
   switch (family)
   {
+    case 17:
+    {
+      cardano_vkey_witness_t* value = NULL;
+      code                          = build_vkey_witness(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_vkey_witness(value, &bytes);
+      cardano_vkey_witness_unref(&value);
+      break;
+    }
+    case 18:
+    {
+      cardano_vkey_witness_set_t* value = NULL;
+      code                              = build_vkey_set(fields, &value);
+      if (code == CARDANO_SUCCESS)
+        code = serialize_vkey_set(value, &bytes);
+      cardano_vkey_witness_set_unref(&value);
+      break;
+    }
     case 14:
     {
       cardano_metadatum_t* value = NULL;
@@ -1348,6 +1369,24 @@ cometa_lean_component_decode(uint8_t family, b_lean_obj_arg bytes)
   lean_object*    fields = NULL;
   switch (family)
   {
+    case 17:
+    {
+      cardano_vkey_witness_t* value = NULL;
+      code                          = parse_vkey_witness(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_vkey_witness(value, &fields);
+      cardano_vkey_witness_unref(&value);
+      break;
+    }
+    case 18:
+    {
+      cardano_vkey_witness_set_t* value = NULL;
+      code                              = parse_vkey_set(bytes, &value);
+      if (code == CARDANO_SUCCESS)
+        code = read_vkey_set(value, &fields);
+      cardano_vkey_witness_set_unref(&value);
+      break;
+    }
     case 14:
     {
       cardano_metadatum_t* value = NULL;

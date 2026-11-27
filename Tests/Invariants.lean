@@ -16,6 +16,7 @@ limitations under the License.
 -/
 
 import Cometa
+import Tests.WitnessFixtures
 
 /-! Compile-time checks that ordinary construction cannot bypass validation. -/
 
@@ -113,6 +114,22 @@ example (metadata : Metadata) : Metadata := { metadata with entries := [] }
 #guard_msgs in
 example (data : AuxiliaryData) : AuxiliaryData := { data with view := {} }
 
+/-- error: Unknown constant `Cometa.VKeyWitness.mk` -/
+#guard_msgs in
+#check VKeyWitness.mk
+
+/-- error: Unknown constant `Cometa.VKeyWitnessSet.mk` -/
+#guard_msgs in
+#check VKeyWitnessSet.mk
+
+/-- error: invalid {...} notation, constructor for `VKeyWitness` is marked as private -/
+#guard_msgs in
+example (witness : VKeyWitness) : VKeyWitness := { witness with signature := ByteArray.empty }
+
+/-- error: invalid {...} notation, constructor for `VKeyWitnessSet` is marked as private -/
+#guard_msgs in
+example (witnesses : VKeyWitnessSet) : VKeyWitnessSet := { witnesses with witnesses := [] }
+
 -- MODEL LAWS -----------------------------------------------------------------
 
 example (left right : Plan) :
@@ -202,3 +219,23 @@ example (data : AuxiliaryData) (expected : Option (Hash 32))
   let transaction ← Transaction.withAuxiliaryData body auxiliary
   return (← transaction.auxiliaryData).any (fun payload => payload.toCbor == auxiliary.toCbor)
     : EIO Error Bool).toIO (IO.userError ∘ toString)
+
+example (witness : VKeyWitness) : witness.verificationKey.size = 32 :=
+  VKeyWitness.verificationKey_size witness
+
+example (witness : VKeyWitness) : witness.signature.size = 64 := VKeyWitness.signature_size witness
+
+example (witnesses : VKeyWitnessSet) : (witnesses.witnesses.map VKeyWitness.verificationKey).Nodup :=
+  VKeyWitnessSet.keys_unique witnesses
+
+example (before additions result : VKeyWitnessSet)
+    (success : (VKeyWitnessSet.checkMerge before additions result).isOk = true) :
+    VKeyWitnessSet.MergeResult before additions result :=
+  VKeyWitnessSet.checkMerge_sound before additions result success
+
+/-- info: true -/
+#guard_msgs in
+#eval (do
+  let bytes ← EIO.ofExcept (Hex.toBytes Tests.WitnessFixtures.emptyMessageWitness)
+  let witness ← VKeyWitness.ofCbor bytes
+  witness.verify ByteArray.empty : EIO Error Bool).toIO (IO.userError ∘ toString)

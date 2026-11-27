@@ -64,6 +64,10 @@ input_file auxiliarySource where
   path := "cbits" / "cometa_auxiliary.h"
   text := true
 
+input_file keyWitnessSource where
+  path := "cbits" / "cometa_key_witnesses.h"
+  text := true
+
 target nativeLibrary _pkg : Dynlib := do
   let file ← nativeLibraryFile.fetch
   file.mapM fun path => do
@@ -72,6 +76,7 @@ target nativeLibrary _pkg : Dynlib := do
 target bridgeObject pkg : FilePath := do
   let source ← bridgeSource.fetch
   let components ← componentSource.fetch
+  let keyWitness ← keyWitnessSource.fetch
   let auxiliary ← auxiliarySource.fetch
   let withdrawals ← withdrawalsSource.fetch
   let transactionBuild ← transactionBuildSource.fetch
@@ -82,6 +87,8 @@ target bridgeObject pkg : FilePath := do
     #["-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror"] "cc" do
       let _ ← components.await
       addTrace components.getTrace
+      let _ ← keyWitness.await
+      addTrace keyWitness.getTrace
       let _ ← auxiliary.await
       addTrace auxiliary.getTrace
       let _ ← withdrawals.await
@@ -114,7 +121,7 @@ lean_lib Cometa where
 
 lean_lib TestSupport where
   roots := #[`Tests.Transaction, `Tests.TransactionFixtures, `Tests.Output, `Tests.OutputFixtures,
-    `Tests.Decoding, `Tests.Assembly, `Tests.Withdrawals, `Tests.Auxiliary]
+    `Tests.Decoding, `Tests.Assembly, `Tests.Withdrawals, `Tests.Auxiliary, `Tests.KeyWitnesses, `Tests.WitnessFixtures]
 
 @[test_driver]
 lean_exe cometaTests where
@@ -137,3 +144,6 @@ lean_exe withdrawRewards where
 
 lean_exe buildMetadataTransaction where
   root := `Examples.BuildMetadataTransaction
+
+lean_exe attachKeyWitnesses where
+  root := `Examples.AttachKeyWitnesses

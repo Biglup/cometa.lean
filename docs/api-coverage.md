@@ -48,13 +48,13 @@ audit. Reconcile the baseline whenever upstream changes.
 | Inputs and UTxOs | Spending/reference/collateral inputs, resolved outputs, uniqueness and disjointness rules | Native reference/input-set/UTxO construction and inspection; checked uniqueness and explicit proved disjointness checks |
 | Body fields | Fee, validity interval, network, mint/burn, withdrawals, certificates, required signers/guards, hashes, collateral/return/total, legacy updates and all optional fields | Native core-body construction and getters for keys 0, 1, 2, 3, 5, 7, 8, 9, 11, 13–18, 21–22; remaining fields listed below |
 | Scripts and data | Every native-script variant; pinned Plutus V1/V2/V3/V4 support; arbitrary Plutus data, script/datum hashes and language discrimination | Typed native scripts, Plutus V1–V4 wrappers/hashes, all Plutus data constructors, checked imported datum bytes; semantic decoding implemented; VM operations remain open |
-| Witnesses and redeemers | Verification-key and bootstrap witnesses, native/Plutus script witnesses, datums, all redeemer purposes, budgets, purpose/index mapping, merging and signing | Opaque preservation only |
+| Witnesses and redeemers | Verification-key and bootstrap witnesses, native/Plutus script witnesses, datums, all redeemer purposes, budgets, purpose/index mapping, merging and signing | Native key witnesses/sets, Ed25519 verification and checked native transaction merging; bootstrap/script/data/redeemer typed assembly and signing remain open |
 | Metadata and auxiliary data | All metadata forms, scripts, auxiliary-data encoding/hash and body commitment | Native metadata forms and label maps, native/Plutus V1–V4 auxiliary scripts, exact hash and checked attachment; historical encoding selection/native parse limits noted below |
 | Staking and pools | All certificate variants, registration/deregistration, delegation and combinations, pool registration/retirement, relays/metadata/owners, reward withdrawals and applicable BLS fields | Native key/script reward accounts and checked withdrawal maps; certificates, pools and BLS fields remain open |
 | Governance | DReps, committee credentials, anchors, constitution, all governance actions, votes, proposals, deposits/refunds, treasury/donations and parameter changes | Missing |
 | Protocol parameters | Complete snapshots and updates, cost models, prices/budgets, voting thresholds, era-specific fields, version/availability distinctions | Missing |
 | Contextual transactions | Subtransaction bodies/builders/witnesses, guards and required top-level guards, direct deposits, account-balance intervals, starting-balance requirements, contextual indices and batch accounting | Missing |
-| Transaction assembly | Typed construction of every supported body/witness/auxiliary combination; historical/mempool/block frames; exact imported bytes and safe updates | Native unsigned assembly with empty witnesses and optional checked auxiliary data, exact imported body/payload preservation, and inspection; typed witnesses and frame selection remain open |
+| Transaction assembly | Typed construction of every supported body/witness/auxiliary combination; historical/mempool/block frames; exact imported bytes and safe updates | Native unsigned assembly with empty witnesses and optional checked auxiliary data, exact imported body/payload preservation, and inspection; checked external key-witness attachment; other typed witness families and frame selection remain open |
 | Building and balancing | Explicit fees, minimum ada, execution/reference-script fees, deposits/refunds, mint/burn/withdrawal accounting, change, collateral, witness estimates, budgets, hashes and convergence | Lovelace payment-intention model only |
 | Keys and wallets | Encrypted wallet interop, derivation, supported signing/witness paths, external signer injection and secret cleanup | Missing |
 | Providers and lifecycle | All query/evaluation/submission/confirmation operations, built-in backends and custom/native adapters | Missing |
@@ -131,6 +131,35 @@ metadata integers extend to -2^64. Byte/text leaves are limited to 64 bytes, wit
 strict UTF-8 and embedded NUL preservation for text. Rebuilding a semantic view
 may normalize bytes; keep `toCbor` or the complete imported auxiliary object when
 identity matters. Auxiliary scripts are not witnesses and are not evaluated.
+
+### Key-witness implementation evidence
+
+| Native boundary | Public Lean API | Evidence / remaining scope |
+| --- | --- | --- |
+| Native Ed25519 key/signature constructors, `cardano_vkey_witness_new/from_cbor/to_cbor`, getters and `cardano_ed25519_public_key_to_hash` | `VKeyWitness.create/ofCbor/toCbor`, `verificationKey/signature/keyHash` | Independent public-key hash and witness vectors; 32/64-byte checks and proofs; exact imported encoding; malformed/truncated/trailing inputs |
+| `cardano_ed25519_public_verify` | `VKeyWitness.verify/verifyTransaction`, `VKeyWitnessSet.verifyTransaction` | Published empty-message vector and independent signatures over synthetic body IDs, including nonminimal bodies; wrong message and changed signatures fail |
+| Native key-witness collection constructor/add/codec/getters/tag controls | `VKeyWitnessSet.ofList/ofCbor/toCbor`, `witnesses/tagged` | Reject repeated public keys before native insertion could replace signatures; tagged/untagged and empty collections; checked key uniqueness |
+| `cardano_transaction_get_witness_set`, `cardano_witness_set_get_vkeys`, `cardano_transaction_apply_vkey_witnesses` | `Transaction.keyWitnesses/addKeyWitnesses` | Verify existing/incoming signatures; reject conflicts; actual C merging; identical-addition idempotence; native field-preservation checks and proved `checkMerge_sound` for observed contents |
+
+`addKeyWitnesses` preserves exact native body/auxiliary caches and checks the
+native-serialized representation of every other witness field before/after applying
+keys. Tests combine bootstrap, native/Plutus V1–V4 scripts, nonminimal datums and
+redeemers with auxiliary data. This preservation coverage does not count as typed
+construction coverage for those other witness families. Body ID and script-validity
+flags are checked across historical/mempool/block transaction frames.
+
+Duplicate public keys are rejected, including identical duplicates. Native merge
+would replace signatures by public key; the public operation rejects conflicts and
+validates that the observed result is exactly the union of both inputs. Existing
+collection tagging is retained, and a newly introduced collection uses the incoming
+tag choice. Witness encoding and outer framing may normalize. Empty additions
+return the original transaction after existing-signature validation.
+
+The pinned key-collection reader can leave an allocated child unreleased when its
+reader fails at an indefinite-array ending. A narrow preflight calls the same native
+child reader and always releases its out-pointer before collection/full-transaction
+parsing. It is not a replacement codec. Verification uses only public data; no wallet,
+private-key handling, signer completeness or spending-authorization claim is made.
 
 Typed construction is still required for body keys 4 (certificates),
 6 (legacy updates), 19–20 (voting/proposals), and 23–27

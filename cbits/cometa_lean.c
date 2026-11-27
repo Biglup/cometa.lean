@@ -89,6 +89,8 @@ cometa_lean_native_version(void)
 
 /* TRANSACTION SNAPSHOTS *****************************************************/
 
+static cardano_error_t check_transaction_key_witnesses(lean_object* bytes);
+
 /** Copy a borrowed buffer; the new byte array owns its storage. */
 static lean_obj_res
 copy_bytes(const byte_t* data, size_t size)
@@ -266,6 +268,11 @@ cometa_lean_transaction_from_cbor(b_lean_obj_arg bytes)
     goto cleanup;
   }
 
+  code = check_transaction_key_witnesses(bytes);
+  if (code != CARDANO_SUCCESS)
+  {
+    goto cleanup;
+  }
   code = cardano_transaction_from_cbor(reader, &transaction);
   if (code != CARDANO_SUCCESS)
   {

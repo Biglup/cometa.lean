@@ -706,6 +706,7 @@ cometa_lean_transaction_auxiliary(b_lean_obj_arg bytes)
   cardano_auxiliary_data_t* auxiliary   = NULL;
   lean_object*              result      = NULL;
   cardano_error_t           code;
+  TRY(check_transaction_key_witnesses(bytes));
   TRY(cardano_transaction_from_cbor(reader, &transaction));
   TRY(require_end(reader));
   auxiliary = cardano_transaction_get_auxiliary_data(transaction);

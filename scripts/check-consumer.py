@@ -50,6 +50,7 @@ def verify(source: Path, consumer: Path) -> None:
     shutil.copyfile(source / "Examples/BuildTransaction.lean", consumer / "BuildTransactionMain.lean")
     shutil.copyfile(source / "Examples/WithdrawRewards.lean", consumer / "WithdrawRewardsMain.lean")
     shutil.copyfile(source / "Examples/BuildMetadataTransaction.lean", consumer / "MetadataMain.lean")
+    shutil.copyfile(source / "Examples/AttachKeyWitnesses.lean", consumer / "WitnessMain.lean")
     (consumer / "lakefile.lean").write_text(
         "import Lake\nopen Lake DSL\npackage consumer\n"
         f"require cometa from {json.dumps(str(source))}\n"
@@ -58,7 +59,8 @@ def verify(source: Path, consumer: Path) -> None:
         "lean_exe buildOutput where\n  root := `OutputMain\n"
         "lean_exe buildTransaction where\n  root := `BuildTransactionMain\n"
         "lean_exe withdrawRewards where\n  root := `WithdrawRewardsMain\n"
-        "lean_exe buildMetadataTransaction where\n  root := `MetadataMain\n", encoding="utf-8")
+        "lean_exe buildMetadataTransaction where\n  root := `MetadataMain\n"
+        "lean_exe attachKeyWitnesses where\n  root := `WitnessMain\n", encoding="utf-8")
     address = "addr_test1vz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzerspjrlsz"
     subprocess.run(["lake", "exe", "inspect", address, "2000000"], cwd=consumer, check=True)
     subprocess.run(["lake", "exe", "inspectTransaction",
@@ -72,6 +74,8 @@ def verify(source: Path, consumer: Path) -> None:
                     reward, "2000000", "170000", "100000000"], cwd=consumer, check=True)
     subprocess.run(["lake", "exe", "buildMetadataTransaction", str(source / "Examples/utxo.cbor.hex"),
                     "674", "Hello from Lean", "170000", "100000000"], cwd=consumer, check=True)
+    subprocess.run(["lake", "exe", "attachKeyWitnesses", str(source / "Examples/transaction.cbor.hex"),
+                    str(source / "Examples/key-witnesses.cbor.hex")], cwd=consumer, check=True)
     print("Clean-source downstream consumer passed (automatic native setup)")
 
 
