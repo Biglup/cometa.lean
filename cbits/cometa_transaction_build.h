@@ -677,17 +677,20 @@ cleanup:
 /* Borrow a complete body, retain its native CBOR cache, and construct an empty
  * witness set. Native transaction serialization determines the frame. */
 LEAN_EXPORT lean_obj_res
-cometa_lean_unsigned_transaction(b_lean_obj_arg body_bytes, uint8_t is_valid)
+cometa_lean_unsigned_transaction(b_lean_obj_arg body_bytes, uint8_t is_valid, b_lean_obj_arg auxiliary_bytes)
 {
   cardano_transaction_body_t* body        = NULL;
   cardano_witness_set_t*      witnesses   = NULL;
+  cardano_auxiliary_data_t*   auxiliary   = NULL;
   cardano_transaction_t*      transaction = NULL;
   cardano_cbor_writer_t*      writer      = NULL;
   lean_object*                bytes       = NULL;
   cardano_error_t             code;
   TRY(parse_body(body_bytes, &body));
   TRY(cardano_witness_set_new(&witnesses));
-  TRY(cardano_transaction_new(body, witnesses, NULL, &transaction));
+  if (lean_sarray_size(auxiliary_bytes) != 0)
+    TRY(parse_auxiliary(auxiliary_bytes, &auxiliary));
+  TRY(cardano_transaction_new(body, witnesses, auxiliary, &transaction));
   TRY(cardano_transaction_set_is_valid(transaction, is_valid != 0));
   writer = cardano_cbor_writer_new();
   if (writer == NULL)
@@ -701,6 +704,7 @@ cleanup:
   cardano_cbor_writer_unref(&writer);
   cardano_transaction_unref(&transaction);
   cardano_witness_set_unref(&witnesses);
+  cardano_auxiliary_data_unref(&auxiliary);
   cardano_transaction_body_unref(&body);
   if (code == CARDANO_SUCCESS)
     return lean_io_result_mk_ok(bytes);
