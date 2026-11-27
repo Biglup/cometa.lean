@@ -34,14 +34,16 @@ limitations under the License.
 
 # Cometa.lean
 
-Typed Cardano address and transaction inspection, with payment-plan construction
-for Lean 4.
+Typed Cardano values, scripts, data, and outputs for Lean 4, with address and
+transaction inspection.
 The native adapter uses cardano-c **2.0.0-rc.7**; the toolchain is pinned to
 **Lean 4.36.0**.
 
-The API parses addresses and serialized transactions, validates lovelace amounts,
-and models ordered payments. It does not yet unlock wallets, build transactions, sign, or submit.
-Plan theorems describe the Lean model; they do not verify cardano-c or ledger execution.
+The API constructs multi-asset outputs, native and versioned Plutus scripts, and
+Plutus data. It also parses addresses and serialized transactions and models
+ordered payments. Wallets, complete transaction assembly, balancing, signing, and
+submission are still being implemented. Proofs describe the Lean models and
+checked results; they do not verify all cardano-c or ledger execution.
 
 ## Build
 
@@ -65,12 +67,12 @@ independent-consumer checks, memory checks, and API documentation generation.
 | --- | --- |
 | [InspectAddress.lean](Examples/InspectAddress.lean) | Parse a recipient and amount, then construct an ordered payment plan. |
 | [InspectTransaction.lean](Examples/InspectTransaction.lean) | Read transaction CBOR, calculate its ID, and inspect its fee, inputs, and output summaries. |
+| [BuildOutput.lean](Examples/BuildOutput.lean) | Construct a multi-asset output with inline data and a native reference script, then check its encoding through C. |
 
-Both are complete single-file programs. These offline examples do not build,
+All are complete single-file programs. These offline examples do not build,
 sign, or submit transactions.
 
 ### Inspect an address
-
 
 [InspectAddress.lean](Examples/InspectAddress.lean) contains the complete program,
 including argument validation and error reporting:
@@ -118,6 +120,36 @@ witnesses, and outer framing. Output summaries retain complete native-reserializ
 CBOR through `output.toCbor`; their `lovelace` field is only the ada component.
 Parsing does not validate signatures, scripts, balances, or ledger acceptance.
 
+### Construct a multi-asset output
+
+```sh
+lake exe buildOutput \
+  addr_test1vz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzerspjrlsz \
+  11111111111111111111111111111111111111111111111111111111 \
+  616263 1 2000000
+```
+
+This constructs an output holding 2 ADA and one unit of asset name `abc` under the
+supplied synthetic policy. It attaches constructor data and a native timelock
+reference script. It does not mint that asset or submit a transaction.
+
+`Value` supports exact signed addition, subtraction, and scaling. Duplicate assets
+add and zero totals disappear when inspecting or encoding the bundle. An output
+must pass `Value.checkOutput`; mint/burn serialization uses separate signed bounds.
+`Output.create` accepts all three datum forms and an optional reference script.
+
+`Script.ofNative` covers signatures, all/any/threshold combinations, and validity
+bounds. `Script.ofPlutus` supports V1 through V4 as opaque compiled programs, with
+native-computed hashes. `PlutusData` covers constructors, ordered maps/lists,
+arbitrary integers, and bytes; imported datum encodings retain their identity.
+Language support does not imply activation on a particular network.
+
+`Value.quantity_add` proves per-asset conservation under addition, and
+`Value.checkOutput_sound` proves the validator's quantity guarantee.
+`Output.checkNativeEncoding` runs the real C codec and returns bytes with evidence
+of equality to this output's Lean encoding. That evidence is specific to the
+checked result, not a universal proof of the C serializer.
+
 ## Documentation and conventions
 
 Public definitions document their units, bounds, errors, and effects in Lean doc
@@ -127,7 +159,7 @@ separators, validation, FFI ownership, and proof boundaries. The
 the doc-gen4 reference locally.
 
 The [implementation plan](docs/implementation-plan.md) records this milestone
-and the path toward multi-asset outputs, encrypted wallets, providers, and a
+and the remaining work toward complete transaction assembly, wallets, providers, and a
 complete build/sign/submit workflow. The [coverage contract](docs/api-coverage.md)
 requires full transaction-building parity, replaceable providers/evaluators/coin
 selectors, and direct access to native instances with explicit proof boundaries.

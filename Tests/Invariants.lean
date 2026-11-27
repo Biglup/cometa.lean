@@ -49,6 +49,22 @@ example (payment : Payment) (recipient : Address) : Payment :=
 example (output : Transaction.OutputSummary) (address : Address) : Transaction.OutputSummary :=
   { output with address := address }
 
+/-- error: Unknown constant `Cometa.Output.mk` -/
+#guard_msgs in
+#check Output.mk
+
+/-- error: Unknown constant `Cometa.Script.mk` -/
+#guard_msgs in
+#check Script.mk
+
+/-- error: Unknown constant `Cometa.EncodedPlutusData.mk` -/
+#guard_msgs in
+#check EncodedPlutusData.mk
+
+/-- error: invalid {...} notation, constructor for `Output` is marked as private -/
+#guard_msgs in
+example (output : Output) (address : Address) : Output := { output with address := address }
+
 -- MODEL LAWS -----------------------------------------------------------------
 
 example (left right : Plan) :
@@ -57,6 +73,21 @@ example (left right : Plan) :
 
 example (identifier : TransactionId) : identifier.toBytes.size = 32 :=
   TransactionId.toBytes_size identifier
+
+example (left right : Value) (asset : AssetId) :
+    (left + right).quantity asset = left.quantity asset + right.quantity asset :=
+  Value.quantity_add left right asset
+
+example (value : Value) (checked : Value.CheckedOutput)
+    (success : value.checkOutput = .ok checked) : value.ValidOutput :=
+  Value.checkOutput_sound value checked success
+
+example (output : Output) : output.value.val.ValidOutput := Output.value_valid output
+
+example (output : Output) : output.address.isPayment = true := Output.address_isPayment output
+
+example (output : Output) (checked : {bytes : ByteArray // bytes = output.toCbor}) :
+    checked.val = output.toCbor := checked.property
 
 -- INTERPRETER ---------------------------------------------------------------
 
@@ -69,3 +100,9 @@ example (identifier : TransactionId) : identifier.toBytes.size = 32 :=
 #eval (do
   let transaction ← Transaction.ofHex "84a3008001800200a0f5f6"
   return transaction.id.toHex : EIO Error String).toIO (IO.userError ∘ toString)
+
+/-- info: true -/
+#guard_msgs in
+#eval (do
+  let datum ← EncodedPlutusData.ofData (.integer 42)
+  return datum.hash.bytes.size == 32 : EIO Error Bool).toIO (IO.userError ∘ toString)

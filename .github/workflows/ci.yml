@@ -50,11 +50,13 @@ jobs:
           clang-format-18 --dry-run --Werror cbits/cometa_lean.c
       - name: Build and test with automatic native setup
         run: |
-          lake build cometaTests inspectAddress inspectTransaction
+          lake build cometaTests inspectAddress inspectTransaction buildOutput
           lake test
           lake lean Tests/Invariants.lean
           lake env leanchecker Cometa.Plan
           lake env leanchecker Cometa.TransactionId
+          lake env leanchecker Cometa.Value
+          lake env leanchecker Cometa.Output
           lake exe inspectTransaction Examples/transaction.cbor.hex
       - name: Check native memory ownership
         run: >-

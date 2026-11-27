@@ -25,11 +25,13 @@ also available for Linux ARM64 and macOS; availability is not a tested-platform 
 Windows packaging has not been implemented.
 
 ```sh
-lake build cometaTests inspectAddress inspectTransaction
+lake build cometaTests inspectAddress inspectTransaction buildOutput
 lake test
 lake lean Tests/Invariants.lean
 lake env leanchecker Cometa.Plan
 lake env leanchecker Cometa.TransactionId
+lake env leanchecker Cometa.Value
+lake env leanchecker Cometa.Output
 lake exe inspectTransaction Examples/transaction.cbor.hex
 python3 scripts/check-source.py
 python3 -m unittest discover -s Tests/Packaging -v
@@ -142,6 +144,44 @@ and an asset, inline datum, and reference script. The example fixture has one
 secrets or live transaction data are needed. The suite also checks every proper
 byte prefix of the basic transaction, trailing data, collection ordering,
 collateral exclusion, 64-bit bounds, and repeated native allocation paths.
+
+### Output construction and checked native results
+
+`Cometa.Value` keeps signed intermediate quantities unbounded. Only output and
+mint encodings impose their respective native bounds. Addition is modeled by a
+finite sequence of signed entries; observations aggregate duplicates, and zero
+aggregates disappear. This representation keeps the quantity law independent of
+map normalization. Encoding groups native assets by policy and sorts encoded map
+keys by length then bytes, matching the pinned native asset-map comparator.
+
+The new audit covers `lib/src/assets/asset_name_map.c`,
+`lib/src/plutus_data/plutus_data.c`, `lib/src/scripts/script.c`, the native-script
+and Plutus V1–V4 implementations, and the existing output/value codecs. Native
+script thresholds use `size_t`; the public UInt64 range matches the supported
+64-bit platforms. Hash getters return owned references. Datum hashing consumes
+exact original bytes after native parsing, including nonminimal encodings.
+The additional pure import scan enforces the 64-byte datum leaf/chunk bound.
+
+The three externs in `Cometa.Internal.Output` borrow a byte array and return
+`EIO UInt32 ByteArray`. Generated C in the Script, PlutusData and Output modules
+confirms a single borrowed argument, no world argument, and the standard IO-result
+layout. Readers, writers, parsed data/scripts/outputs and hashes are unreferenced
+on every return path. All returned bytes are copied into Lean ownership.
+
+`Output.checkNativeEncoding` calls the actual output codec and compares its result
+with the pure constructed encoding. Success returns a subtype carrying equality
+for that observed result. The proof does not assert universal correctness of the
+C codec, script execution, minimum ada, or ledger acceptance. Value bounds and the
+payment-header property have separate model proofs. Provider/evaluator/selector
+instances and their future validators remain tracked in `api-coverage.md`.
+
+`Tests/OutputFixtures.lean` contains independent Python hashlib digests for typed
+data and language-discriminated script bytes. Tests cover arbitrary signed
+bignums, byte chunking, nontext asset names, aggregation, mint/output bounds,
+legacy/map outputs, every native-script form, V1–V4 reference scripts, malformed
+imports, every truncated prefix of a rich output, and repeated ownership paths.
+The single-file `BuildOutput.lean` example is also compiled and run by the clean
+consumer test, including from the release source archive.
 
 ## Design references
 

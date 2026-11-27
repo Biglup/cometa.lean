@@ -107,6 +107,32 @@ allocations remain at exit. CI repeats these checks and tests the actual release
 source archive. There has been no preprod run, wallet access, signing, submission,
 version bump, or release publication in this milestone.
 
+## Output-construction slice
+
+Added proof-bearing fixed-size hashes and asset names, arbitrary-precision signed
+values, separate checked output/mint encodings, complete typed native-script
+construction, Plutus V1–V4 program wrappers, all Plutus data constructors, and
+map/legacy output construction with datum/reference-script support.
+
+`Value.quantity_add` and `Value.checkOutput_sound` establish model/validator laws.
+`Output.checkNativeEncoding` exercises the concrete C output codec and returns a
+checked equality for that observed result. `BuildOutput.lean` is a complete
+single-file example using that operation. Native datum/script hashes are checked
+against independent vectors; the coverage document maps each implemented family
+to its native/schema boundary and records open APIs and quantity-range limits.
+
+Semantic decoding of values, scripts, Plutus data and complete outputs remains
+part of stage 1. Next implement those component APIs before full transaction
+assembly. The evaluator, selector, provider, wallet and signing requirements remain
+unchanged; this slice does not close those stages or imply full parity.
+
+Local Linux x86_64 checks pass: native/encoding tests, interpreter and constructor
+checks, kernel checking, packaging regressions, formatting/licenses, API docs,
+and all three examples in a clean consumer. Valgrind reports zero errors and
+zero definitely/indirectly lost bytes, with Lean runtime allocations remaining.
+CI repeats the checks and runs the consumer from the release source archive.
+No wallet, live-network, transaction submission or release operation is included.
+
 ## Remaining implementation sequence
 
 All stages below are required for completion. The sequence keeps each PR testable;
@@ -116,7 +142,8 @@ it does not defer less common transaction capabilities indefinitely.
    unsigned output quantities versus signed mint/burn quantities, checked values,
    all Plutus data constructors, datum hashes/inline data, native scripts and every
    pinned Plutus version, and reference scripts. Preserve encoding where identity
-   depends on it. Implement complete output construction and serialization.
+   depends on it. Complete construction, serialization and semantic decoding for
+   these components; construction is implemented in the output slice above.
 2. **Complete transaction components and assembly.** UTxOs, spending/reference/
    collateral inputs, all body fields, withdrawals, metadata and auxiliary data,
    witnesses/redeemers, protocol parameters/updates, every certificate/governance
