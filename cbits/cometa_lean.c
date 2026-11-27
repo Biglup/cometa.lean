@@ -152,50 +152,62 @@ snapshot_inputs(cardano_transaction_input_set_t* inputs, lean_object** result)
   return CARDANO_SUCCESS;
 }
 
+/** Borrow an output; return owned serialized bytes, or NULL on failure. */
+static cardano_error_t
+encode_output(cardano_transaction_output_t* output, lean_object** result)
+{
+  *result                       = NULL;
+  cardano_cbor_writer_t* writer = cardano_cbor_writer_new();
+  if (writer == NULL)
+  {
+    return CARDANO_ERROR_MEMORY_ALLOCATION_FAILED;
+  }
+
+  cardano_error_t code = cardano_transaction_output_to_cbor(output, writer);
+  if (code == CARDANO_SUCCESS)
+  {
+    const size_t size  = cardano_cbor_writer_get_encode_size(writer);
+    lean_object* bytes = lean_alloc_sarray(1, size, size);
+    code               = cardano_cbor_writer_encode(writer, lean_sarray_cptr(bytes), size);
+    if (code == CARDANO_SUCCESS)
+    {
+      *result = bytes;
+    }
+    else
+    {
+      lean_dec(bytes);
+    }
+  }
+  cardano_cbor_writer_unref(&writer);
+  return code;
+}
+
 /**
  * Borrow an output and copy its address, coin, and native-reserialized CBOR.
- * Getters acquire address/value references; the writer and all acquired objects
- * are released here. On failure result is NULL and no Lean allocation escapes.
+ * Getters acquire address/value references, which are released on all paths.
+ * On failure result is NULL and no Lean allocation escapes.
  */
 static cardano_error_t
 snapshot_output(cardano_transaction_output_t* output, lean_object** result)
 {
-  *result                        = NULL;
-  cardano_address_t*     address = cardano_transaction_output_get_address(output);
-  cardano_value_t*       value   = cardano_transaction_output_get_value(output);
-  cardano_cbor_writer_t* writer  = cardano_cbor_writer_new();
-  lean_object*           cbor    = NULL;
-  cardano_error_t        code    = CARDANO_SUCCESS;
+  *result                    = NULL;
+  cardano_address_t* address = cardano_transaction_output_get_address(output);
+  cardano_value_t*   value   = cardano_transaction_output_get_value(output);
+  lean_object*       cbor    = NULL;
+  cardano_error_t    code    = CARDANO_ERROR_POINTER_IS_NULL;
 
-  if (address == NULL || value == NULL || writer == NULL)
+  if (address != NULL && value != NULL)
   {
-    code = CARDANO_ERROR_MEMORY_ALLOCATION_FAILED;
-    goto cleanup;
+    code = encode_output(output, &cbor);
+    if (code == CARDANO_SUCCESS)
+    {
+      lean_object* bytes = copy_bytes(cardano_address_get_bytes(address), cardano_address_get_bytes_size(address));
+      /* Restore the unsigned coin representation used by the native CBOR writer. */
+      lean_object* coin = lean_box_uint64((uint64_t)cardano_value_get_coin(value));
+      *result           = owned_pair(bytes, owned_pair(coin, cbor));
+    }
   }
 
-  code = cardano_transaction_output_to_cbor(output, writer);
-  if (code != CARDANO_SUCCESS)
-  {
-    goto cleanup;
-  }
-
-  const size_t size = cardano_cbor_writer_get_encode_size(writer);
-  cbor              = lean_alloc_sarray(1, size, size);
-  code              = cardano_cbor_writer_encode(writer, lean_sarray_cptr(cbor), size);
-  if (code != CARDANO_SUCCESS)
-  {
-    lean_dec(cbor);
-    goto cleanup;
-  }
-
-  lean_object* bytes = copy_bytes(cardano_address_get_bytes(address), cardano_address_get_bytes_size(address));
-  /* The native reader reads uint64 coin and stores it in int64. Restore the
-   * unsigned representation, as its CBOR writer does, without losing bit 63. */
-  lean_object* coin = lean_box_uint64((uint64_t)cardano_value_get_coin(value));
-  *result           = owned_pair(bytes, owned_pair(coin, cbor));
-
-cleanup:
-  cardano_cbor_writer_unref(&writer);
   cardano_value_unref(&value);
   cardano_address_unref(&address);
   return code;
@@ -316,4 +328,105 @@ cleanup:
   cardano_transaction_unref(&transaction);
   cardano_cbor_reader_unref(&reader);
   return result != NULL ? result : native_error(code);
+}
+
+/* OUTPUT, DATUM, AND SCRIPT CODECS *******************************************/
+
+/** Require complete byte consumption without disclosing input contents. */
+static cardano_error_t
+require_end(cardano_cbor_reader_t* reader)
+{
+  size_t          remaining = 0;
+  cardano_error_t code      = cardano_cbor_reader_get_bytes_remaining(reader, &remaining);
+  return code != CARDANO_SUCCESS ? code : remaining == 0 ? CARDANO_SUCCESS
+                                                         : CARDANO_ERROR_INVALID_CBOR_VALUE;
+}
+
+/** Consume an owned native hash reference; copy its borrowed bytes into Lean. */
+static lean_obj_res
+hash_result(cardano_error_t code, cardano_blake2b_hash_t* hash)
+{
+  if (code != CARDANO_SUCCESS || hash == NULL)
+  {
+    cardano_blake2b_hash_unref(&hash);
+    return native_error(code == CARDANO_SUCCESS ? CARDANO_ERROR_MEMORY_ALLOCATION_FAILED : code);
+  }
+  lean_object* bytes = copy_bytes(cardano_blake2b_hash_get_data(hash), cardano_blake2b_hash_get_bytes_size(hash));
+  cardano_blake2b_hash_unref(&hash);
+  return lean_io_result_mk_ok(bytes);
+}
+
+/** Borrow exact datum CBOR; release parser/data references and return its hash. */
+LEAN_EXPORT lean_obj_res
+cometa_lean_datum_hash(b_lean_obj_arg bytes)
+{
+  cardano_cbor_reader_t*  reader = cardano_cbor_reader_new(lean_sarray_cptr(bytes), lean_sarray_size(bytes));
+  cardano_plutus_data_t*  data   = NULL;
+  cardano_blake2b_hash_t* hash   = NULL;
+  cardano_error_t         code   = CARDANO_ERROR_MEMORY_ALLOCATION_FAILED;
+  if (reader != NULL)
+  {
+    code = cardano_plutus_data_from_cbor(reader, &data);
+    if (code == CARDANO_SUCCESS)
+    {
+      code = require_end(reader);
+    }
+    if (code == CARDANO_SUCCESS)
+    {
+      code = cardano_blake2b_compute_hash(lean_sarray_cptr(bytes), lean_sarray_size(bytes), 32, &hash);
+    }
+  }
+  cardano_plutus_data_unref(&data);
+  cardano_cbor_reader_unref(&reader);
+  return hash_result(code, hash);
+}
+
+/** Borrow a script envelope; native hashing includes its language discriminator. */
+LEAN_EXPORT lean_obj_res
+cometa_lean_script_hash(b_lean_obj_arg bytes)
+{
+  cardano_cbor_reader_t*  reader = cardano_cbor_reader_new(lean_sarray_cptr(bytes), lean_sarray_size(bytes));
+  cardano_script_t*       script = NULL;
+  cardano_blake2b_hash_t* hash   = NULL;
+  cardano_error_t         code   = CARDANO_ERROR_MEMORY_ALLOCATION_FAILED;
+  if (reader != NULL)
+  {
+    code = cardano_script_from_cbor(reader, &script);
+    if (code == CARDANO_SUCCESS)
+    {
+      code = require_end(reader);
+    }
+    if (code == CARDANO_SUCCESS)
+    {
+      hash = cardano_script_get_hash(script);
+    }
+  }
+  cardano_script_unref(&script);
+  cardano_cbor_reader_unref(&reader);
+  return hash_result(code, hash);
+}
+
+/** Borrow one output's CBOR; native references never escape the call. */
+LEAN_EXPORT lean_obj_res
+cometa_lean_output_round_trip(b_lean_obj_arg bytes)
+{
+  cardano_cbor_reader_t*        reader  = cardano_cbor_reader_new(lean_sarray_cptr(bytes), lean_sarray_size(bytes));
+  cardano_transaction_output_t* output  = NULL;
+  lean_object*                  encoded = NULL;
+  cardano_error_t               code    = CARDANO_ERROR_MEMORY_ALLOCATION_FAILED;
+  if (reader != NULL)
+  {
+    code = cardano_transaction_output_from_cbor(reader, &output);
+    if (code == CARDANO_SUCCESS)
+    {
+      code = require_end(reader);
+    }
+    if (code == CARDANO_SUCCESS)
+    {
+      code = encode_output(output, &encoded);
+    }
+  }
+  cardano_transaction_output_unref(&output);
+  cardano_cbor_reader_unref(&reader);
+  return code == CARDANO_SUCCESS ? lean_io_result_mk_ok(encoded) : native_error(code);
 }

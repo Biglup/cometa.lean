@@ -20,5 +20,6 @@ import Cometa.Lovelace
 import Cometa.Address
 import Cometa.Plan
 import Cometa.Transaction
+import Cometa.Output
 
-/-! Cometa's public address, amount, payment-plan, and transaction-inspection API. -/
+/-! Cometa's public address, value, output, script, datum, plan, and transaction APIs. -/
