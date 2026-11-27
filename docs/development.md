@@ -25,10 +25,12 @@ also available for Linux ARM64 and macOS; availability is not a tested-platform 
 Windows packaging has not been implemented.
 
 ```sh
-lake build cometaTests inspectAddress
+lake build cometaTests inspectAddress inspectTransaction
 lake test
 lake lean Tests/Invariants.lean
 lake env leanchecker Cometa.Plan
+lake env leanchecker Cometa.TransactionId
+lake exe inspectTransaction Examples/transaction.cbor.hex
 python3 scripts/check-source.py
 python3 -m unittest discover -s Tests/Packaging -v
 python3 scripts/check-consumer.py
@@ -102,6 +104,44 @@ any toolchain change. `@&` parameters remain borrowed, not consumed by the adapt
 The test address strings are CIP-19 vectors, also used in cardano-c's Apache-2.0
 address tests and Cometa.hs `test/Fixtures/Address.hs`. The native snapshot above
 fixes their provenance. They are public test addresses, not funded-wallet material.
+
+### Transaction snapshot audit
+
+The transaction adapter audits `lib/src/transaction/transaction.c`,
+`lib/src/transaction_body/{transaction_body,transaction_input,transaction_input_set,
+transaction_output,transaction_output_list,value}.c`, and
+`lib/src/collections/array.c` at the same pinned revision. The parser caches the
+original body bytes; `cardano_transaction_get_id` hashes that cache. Cometa never
+clears it and retains the original full transaction bytes in Lean. Output CBOR
+is separately reserialized and may normalize framing.
+
+Body, collection, input/output, address/value, and hash getters acquire references.
+Collection `get` calls use `cardano_array_get`, which also increments its element's
+reference count. Each acquired reference is released on success and error paths.
+Partially populated Lean arrays are decremented on failure. Native buffers are
+copied before their owners are released. The input parser sorts by hash/index
+and retains duplicates; the output list preserves order.
+
+`RawTransaction` uses right-associated `Prod` values, with boxed UInt64/Bool fields
+and owned arrays of products. The generated declarations and product projections
+in `.lake/build/ir/Cometa/Transaction.c` confirm a borrowed byte-array argument,
+no world argument, and an IO-result return. Numeric projections unbox UInt64;
+no native scalar struct-layout assumptions are used at this boundary.
+
+The native value parser reads an unsigned 64-bit coin into signed storage. The
+adapter casts it back to uint64, matching the native writer, and tests the maximum
+value to prevent sign extension/truncation errors. This is a representation bound,
+not a ledger supply or output-validity claim.
+
+`Tests/TransactionFixtures.lean` defines synthetic unsigned CBOR vectors. Their
+expected transaction IDs were calculated independently with Python's
+`hashlib.blake2b(bytes.fromhex(body), digest_size=32).hexdigest()`. The fixtures
+exercise historical/mempool/block and indefinite framing, nonminimal body bytes,
+and an asset, inline datum, and reference script. The example fixture has one
+2 ADA output, a 170000 lovelace fee, and a nonexistent all-zero input. No wallet
+secrets or live transaction data are needed. The suite also checks every proper
+byte prefix of the basic transaction, trailing data, collection ordering,
+collateral exclusion, 64-bit bounds, and repeated native allocation paths.
 
 ## Design references
 

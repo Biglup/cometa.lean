@@ -34,12 +34,13 @@ limitations under the License.
 
 # Cometa.lean
 
-Typed Cardano address inspection and payment-plan construction for Lean 4.
+Typed Cardano address and transaction inspection, with payment-plan construction
+for Lean 4.
 The native adapter uses cardano-c **2.0.0-rc.7**; the toolchain is pinned to
 **Lean 4.36.0**.
 
-This initial API parses addresses, validates lovelace amounts, and models ordered
-payments. It does not yet unlock wallets, build transactions, sign, or submit.
+The API parses addresses and serialized transactions, validates lovelace amounts,
+and models ordered payments. It does not yet unlock wallets, build transactions, sign, or submit.
 Plan theorems describe the Lean model; they do not verify cardano-c or ledger execution.
 
 ## Build
@@ -58,7 +59,18 @@ builds verify and reuse the local installation. See the
 [development guide](docs/development.md) for offline setup, platform scope,
 independent-consumer checks, memory checks, and API documentation generation.
 
-## Example
+## Examples
+
+| Program | Workflow |
+| --- | --- |
+| [InspectAddress.lean](Examples/InspectAddress.lean) | Parse a recipient and amount, then construct an ordered payment plan. |
+| [InspectTransaction.lean](Examples/InspectTransaction.lean) | Read transaction CBOR, calculate its ID, and inspect its fee, inputs, and output summaries. |
+
+Both are complete single-file programs. These offline examples do not build,
+sign, or submit transactions.
+
+### Inspect an address
+
 
 [InspectAddress.lean](Examples/InspectAddress.lean) contains the complete program,
 including argument validation and error reporting:
@@ -78,6 +90,34 @@ Lean-owned values, with no native handles for callers to release.
 order and duplicate payments. `Plan.totalLovelace_append` proves that composition
 adds their requested lovelace totals. These totals exclude fees and deposits.
 
+### Inspect a transaction
+
+Run the example with the included synthetic, unsigned transaction:
+
+```sh
+lake exe inspectTransaction Examples/transaction.cbor.hex
+```
+
+It prints the transaction ID, declared fee and script-validity flag, spending
+inputs, and each ordinary output's address and lovelace component. The fixture
+spends a nonexistent input; it is for offline inspection, not submission.
+
+The library API keeps the effectful parsing step separate from pure observations:
+
+```lean
+def inspect (cborHex : String) : EIO Cometa.Error String := do
+  let transaction ← Cometa.Transaction.ofHex cborHex
+
+  let identifier := transaction.id
+  let fee := transaction.fee
+  return s!"{identifier}: {fee} lovelace in fees"
+```
+
+`Transaction.toCbor` preserves every supplied byte, including body encoding,
+witnesses, and outer framing. Output summaries retain complete native-reserialized
+CBOR through `output.toCbor`; their `lovelace` field is only the ada component.
+Parsing does not validate signatures, scripts, balances, or ledger acceptance.
+
 ## Documentation and conventions
 
 Public definitions document their units, bounds, errors, and effects in Lean doc
@@ -85,6 +125,10 @@ comments. [CODING_CONVENTIONS.md](CODING_CONVENTIONS.md) describes layout, secti
 separators, validation, FFI ownership, and proof boundaries. The
 [development guide](docs/development.md#api-documentation) explains how to build
 the doc-gen4 reference locally.
+
+The [implementation plan](docs/implementation-plan.md) records this milestone
+and the path toward multi-asset outputs, encrypted wallets, providers, and a
+complete build/sign/submit workflow.
 
 Licensed under [Apache-2.0](LICENSE).
 

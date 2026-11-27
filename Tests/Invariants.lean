@@ -36,14 +36,36 @@ example (payment : Payment) (recipient : Address) : Payment :=
 #guard_msgs in
 #check Payment.mk
 
+/-- error: Unknown constant `Cometa.Transaction.mk` -/
+#guard_msgs in
+#check Transaction.mk
+
+/-- error: Unknown constant `Cometa.Transaction.OutputSummary.mk` -/
+#guard_msgs in
+#check Transaction.OutputSummary.mk
+
+/-- error: invalid {...} notation, constructor for `Transaction.OutputSummary` is marked as private -/
+#guard_msgs in
+example (output : Transaction.OutputSummary) (address : Address) : Transaction.OutputSummary :=
+  { output with address := address }
+
 -- MODEL LAWS -----------------------------------------------------------------
 
 example (left right : Plan) :
     (left ++ right).totalLovelace = left.totalLovelace + right.totalLovelace :=
   Plan.totalLovelace_append left right
 
+example (identifier : TransactionId) : identifier.toBytes.size = 32 :=
+  TransactionId.toBytes_size identifier
+
 -- INTERPRETER ---------------------------------------------------------------
 
 /-- info: "2.0.0-rc.7" -/
 #guard_msgs in
 #eval nativeVersion
+
+/-- info: "36fdff68dfe3660f1ceea60f018a0fd7a83da13def229108794c397a879b0436" -/
+#guard_msgs in
+#eval (do
+  let transaction ← Transaction.ofHex "84a3008001800200a0f5f6"
+  return transaction.id.toHex : EIO Error String).toIO (IO.userError ∘ toString)

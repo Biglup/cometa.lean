@@ -23,7 +23,7 @@ open System Lake DSL
 
 package cometa where
   version := v!"0.1.0"
-  description := "Cardano addresses and payment plans for Lean"
+  description := "Cardano address and transaction inspection with payment plans for Lean"
   license := "Apache-2.0"
   moreLeanArgs := #["-DwarningAsError=true", "-Dlinter.missingDocs=true"]
 
@@ -84,9 +84,15 @@ lean_lib Cometa where
   moreLinkLibs := #[bridgeLibrary]
   precompileModules := true
 
+lean_lib TestSupport where
+  roots := #[`Tests.Transaction, `Tests.TransactionFixtures]
+
 @[test_driver]
 lean_exe cometaTests where
   root := `Tests.Main
 
 lean_exe inspectAddress where
   root := `Examples.InspectAddress
+
+lean_exe inspectTransaction where
+  root := `Examples.InspectTransaction
